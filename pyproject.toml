@@ -84,15 +84,20 @@ default-tag = "1.0.0"
 [tool.versioningit.write]
 file = "QuantumPioneer/_version.py"
 
-[tool.isort]
-profile = "black"
-
-[tool.flake8]
-max-line-length = 88
-ignore = "E203,W503"
-
-[tool.pylint]
-rcfile = ".pylintrc"
+[tool.ruff]
+line-length = 88
+select = [
+    "E",  # Errors
+    "W",  # Warnings
+    "F",  # Failures
+    "I",  # Imports
+    "C",  # Complexity
+    "B",  # Bugs
+    "Q",  # Quality
+    "SIM",  # Similarity
+    "UP",  # Unused Parameters
+    "PL"  # Plugin Lints
+]
 
 [tool.pytest.ini_options]
 minversion = "7.0"
