@@ -1,6 +1,6 @@
 import itertools as it
 import re
-from typing import List, Optional, Union
+import typing as t
 
 import numpy as np
 from rdkit import Chem
@@ -9,16 +9,16 @@ from rdmc import RDKitMol
 from rdmc.ts import get_formed_and_broken_bonds
 
 FF = AllChem.ETKDGv3()
-FF.randomSeed = np.random.randint(
-    1, 10000000
-)  # this make sure we get different embedding each time
+# this make sure we get different embedding each time
+FF.randomSeed = np.random.randint(1, 10000000)
 
 
 # SMARTS patterns for substructure match
 ROO_GROUP = "[H,C,N,O]-[O;X2]-[O;X1+0]"  # match ROO radical, with R = H, C, O, N only
 ROOH_GROUP = "[*]-[O;X2]-[OH]"  # match any ROOH group
-NONE_GROUP = "[Xe]"  # using Xe as a None group that will match nothing; use when you do
-# not care what the species is
+# using Xe as a None group that will match nothing; use when you do not care what
+# the species is
+NONE_GROUP = "[Xe]"
 RADICAL_GROUP = "[CX3+0,NX2+0,OX1+0]"  # match radical, with R = C, O, N only
 
 
@@ -50,16 +50,18 @@ def adjust_atom_map_smi_indexing(
     def increment(m):
         return str(int(m.group().rstrip("]")) + 1) + "]"
 
-    # Use a regular expression to find all the integers and decrement or increment each one
-    # Note we search for "{number}]" to ensure that the number corresponds to an atom index.
-    # Sometimes, SMILES strings include numbers to indicate connectivity i.e. in rings.
+    # Use a regular expression to find all the integers and decrement or increment each
+    # one. Note we search for "{number}]" to ensure that the number corresponds to an
+    # atom index. Sometimes, SMILES strings include numbers to indicate connectivity
+    # i.e. in rings.
     if mode == "plus_one":
         new_smi = re.sub(r"\d+]", lambda m: increment(m), rxn_smi)
     elif mode == "minus_one":
         new_smi = re.sub(r"\d+]", lambda m: decrement(m), rxn_smi)
     else:
         raise ValueError(
-            f"Specificed mode {mode} not recognized. Must be either plus_one or minus_one"
+            f"Specificed mode {mode} not recognized. "
+            "Must be either plus_one or minus_one"
         )
 
     return new_smi
@@ -92,7 +94,7 @@ def determine_atom_map_smi_indexing(
 
 def split_rxn_smi(
     rxn_smi: str,
-) -> Union[List[str], List[str]]:
+) -> t.Tuple[t.List[str], t.List[str]]:
     """
     Split a given reaction smile into reactant and product smiles in lists.
 
@@ -103,7 +105,7 @@ def split_rxn_smi(
 
     Returns
     -------
-    Union[List[str], List[str]]
+    Union[t.List[str], t.List[str]]
         Smiles of individual reactants and products, in separate lists.
     """
 
@@ -115,8 +117,8 @@ def split_rxn_smi(
 
 def reorder_reaction_smile(
     rxn_smi: str,
-    r_pattern: Optional[List[str]] = [],
-    p_pattern: Optional[List[str]] = [],
+    r_pattern: t.Sequence[str] = (),
+    p_pattern: t.Sequence[str] = (),
 ) -> str:
     """
     Preprocess a reaction smile to a specified order by user.
@@ -134,10 +136,10 @@ def reorder_reaction_smile(
     ----------
     rxn_smi : str
         Atom-mapped reaction smiles.
-    r_pattern : Optional[List[str]], optional
+    r_pattern : Optional[t.List[str]], optional
         SMARTS pattern for matching reactants, length must match number of reactants in
         rxn_smi.
-    p_pattern : Optional[List[str]], optional
+    p_pattern : Optional[t.List[str]], optional
         SMARTS pattern for matching products, length must match number of products in
         rxn_smi.
 
@@ -170,23 +172,19 @@ def reorder_reaction_smile(
 
     # match reactant pattern
     for pattern in r_pattern:
-        patt = Chem.MolFromSmarts(
-            pattern
-        )  # turn pattern into rdkit molecule for substructure matching
+        # turn pattern into rdkit molecule for substructure matching
+        patt = Chem.MolFromSmarts(pattern)
         try:
+            # return species index of the first match
             matched_idx = [
                 bool(x) for x in [mol.GetSubstructMatch(patt) for mol in _r_mols]
-            ].index(
-                True
-            )  # return species index of the first match
+            ].index(True)
         except ValueError:
-            if (
-                NONE_GROUP in r_pattern
-            ):  # NONE_group means the user does not care about which species ge
+            # NONE_group means the user does not care about which species ge
+            if NONE_GROUP in r_pattern:
                 # matched in the current index
-                reactants.append(
-                    None
-                )  # place holder for index/order keeping, will be replaced by leftover
+                # place holder for index/order keeping, will be replaced by leftover
+                reactants.append(None)
                 # species later
                 continue
             else:
@@ -194,20 +192,18 @@ def reorder_reaction_smile(
                     f"Pattern {pattern} not found in provided reaction species."
                 )
 
-        reactants.append(
-            _reactants[matched_idx]
-        )  # add matched species to new reactants list
+        # add matched species to new reactants list
+        reactants.append(_reactants[matched_idx])
         _r_mols.pop(matched_idx)
         _reactants.pop(matched_idx)
-    if reactants == [
-        None,
-        None,
-    ]:  # this means the user does not care about species order
-        reactants = _reactants  # so we leave order unchanged
-    elif None in reactants:  # one of the species can be any left over species
-        reactants[reactants.index(None)] = _reactants[
-            0
-        ]  # replace the place holder with left over species
+    # this means the user does not care about species order
+    if reactants == [None, None]:
+        # so we leave order unchanged
+        reactants = _reactants
+    # one of the species can be any left over species
+    elif None in reactants:
+        # replace the place holder with left over species
+        reactants[reactants.index(None)] = _reactants[0]
 
     # match product pattern, same logic as reactant
     for pattern in p_pattern:
@@ -260,7 +256,7 @@ def isomorphic_check(
 def get_ordered_integers(
     rxn_smi: str,
     sorted: bool = False,
-) -> List[int]:
+) -> t.List[int]:
     """
     Get integers ordered by occurrence from a string. Useful to extract atom mapping
     from smiles.
@@ -274,7 +270,7 @@ def get_ordered_integers(
 
     Returns
     -------
-    List[int]
+    t.List[int]
         Extracted integer list.
     """
 
@@ -297,7 +293,7 @@ def get_neighbour_atom(mol, center_atom_idx, exlude_atom_idx_list=None):
     center_atom_idx : int
         Index of the center atom.
     exlude_atom_idx_list : list, optional
-        List of atom indices to exclude, by default None.
+        t.List of atom indices to exclude, by default None.
 
     Returns
     -------
@@ -328,32 +324,32 @@ def find_fragment(mol, center_atom_idx, exlude_atom_idx_list):
     center_atom_idx : int
         Index of the center atom.
     exlude_atom_idx_list : list
-        List of atom indices to exclude.
+        t.List of atom indices to exclude.
 
     Returns
     -------
     dict
         Dictionary of fragment atom indices and their symbols.
     """
-    frag = dict()
+    frag = {}
     max_frag_size = len(mol.GetAtomicNumbers())
     center_atom = {center_atom_idx: mol.GetAtomWithIdx(center_atom_idx).GetSymbol()}
 
     frag = get_neighbour_atom(mol, center_atom_idx, exlude_atom_idx_list)
 
     search_list = list(frag.keys())
-    to_exlude = list()
+    to_exlude = []
     to_exlude.append(center_atom_idx)
 
     while search_list:
         for k in search_list:
             if mol.GetAtomWithIdx(k).GetSymbol() == "H":
                 to_exlude.append(k)
-                search_list = list(set([x for x in search_list if x not in to_exlude]))
+                search_list = list({x for x in search_list if x not in to_exlude})
             neighbour = get_neighbour_atom(mol, k, to_exlude)
             search_list.extend(list(neighbour.keys()))
             to_exlude.append(k)
-            search_list = list(set([x for x in search_list if x not in to_exlude]))
+            search_list = list({x for x in search_list if x not in to_exlude})
             frag.update(neighbour)
 
             if len(frag.keys()) >= max_frag_size:
@@ -385,18 +381,15 @@ def perceive_rxn_generate_complex(
     r_complex, p_complex = [RDKitMol.FromSmiles(smi) for smi in rxn_smi.split(">>")]
 
     # perceive reaction center
-    fbond, bbond = get_formed_and_broken_bonds(
-        r_complex, p_complex
-    )  # formed, broken bonds indices e.g., fbond = [(1, 3)] means a bond forms between
+    # formed, broken bonds indices e.g., fbond = [(1, 3)] means a bond forms between
+    fbond, bbond = get_formed_and_broken_bonds(r_complex, p_complex)
     # atom with index 1 and 3, notice that atoms are zero-indexed and reaction is
     # analyzed in the forward direction
-    the_h_atom = list(
-        set(it.chain(*fbond)).intersection(it.chain(*bbond))
-    )  # the H atom index in the TS
+    # the H atom index in the TS
+    the_h_atom = list(set(it.chain(*fbond)).intersection(it.chain(*bbond)))
 
-    _pivot_atoms = list(
-        set(it.chain(*(fbond + bbond))).difference(the_h_atom)
-    )  # TS pivot atom indices, not yet sorted by given reactants order
+    # TS pivot atom indices, not yet sorted by given reactants order
+    _pivot_atoms = list(set(it.chain(*(fbond + bbond))).difference(the_h_atom))
     pivot_atoms = [None] * len(_pivot_atoms)
 
     # get atom indices in each molecule fragments, re-arranged to match the reactants
@@ -430,19 +423,17 @@ def perceive_rxn_generate_complex(
     # re-arrange pivot_atoms to match the reactants ordered in the smi;
     # pivot = R1 -- H(TS) -- R2; e.g., pivot = [15, 7] means atom with index 15 in R1
     # and index 7 in R2 are atoms in the reaction coordinate
-    for i, x in enumerate(_pivot_atoms):
+    for x in _pivot_atoms:
         idx = [x in f for f in frags_r].index(True)
         pivot_atoms[idx] = x
 
     # embed 3D geometry for reactants and products
-    r_complex.EmbedConformer(
-        FF
-    )  # here we use ETKDGv3() defined on top of the notebook, but can be changed to
+    # here we use ETKDGv3() defined on top of the notebook, but can be changed to
+    r_complex.EmbedConformer(FF)
     # others if needed
     p_complex.EmbedConformer(FF)
-    ts_complex = r_complex.AddRedundantBonds(
-        fbond
-    )  # we need to add redundant bond to the reactant complex graph to represent the TS
+    # we need to add redundant bond to the reactant complex graph to represent the TS
+    ts_complex = r_complex.AddRedundantBonds(fbond)
     # geometry ts_complex.GetConformer() # embed TS conformer
 
     # get indices for neighbouring atoms of pivot atoms
@@ -485,7 +476,7 @@ def perceive_rxn_generate_complex(
     _r2_neighbour_indices_by_size.sort(key=lambda x: x[1], reverse=True)
     r2_neighbour_indices = [x[0] for x in _r2_neighbour_indices_by_size]
 
-    output = dict()
+    output = {}
     output["rxn_smi"] = rxn_smi
     output["r_complex"] = r_complex
     output["p_complex"] = p_complex

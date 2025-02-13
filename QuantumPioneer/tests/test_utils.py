@@ -140,7 +140,7 @@ def test_get_ordered_integers():
     smi1 = "[H:10][C:15]([H:11])([H:12])[C:16]([H:13])([H:14])[F:17]"
     assert utils.get_ordered_integers(smi1) == [10, 15, 11, 12, 16, 13, 14, 17]
 
-    smi2 = "[c:5]1([H:24])[c:6]([H:25])[c:7]([S-:8])[c:9]([H:26])[c:10]([H:27])[c:11]1[N+:12](=[O:13])[O-:14]"
+    smi2 = "[c:5]1([H:24])[c:6]([H:25])[c:7]([S-:8])[c:9]([H:26])[c:10]([H:27])[c:11]1[N+:12](=[O:13])[O-:14]"  # noqa E501
     assert utils.get_ordered_integers(smi2) == [
         5,
         24,
