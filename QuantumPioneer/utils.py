@@ -30,13 +30,18 @@ def adjust_atom_map_smi_indexing(
     Helper function to adjust the indexing of atom mapped smiles. Useful for converting
     the smi to zero- or one- indexing.
 
-    Args:
-        rxn_smi (str): input atom-mapped reaction smiles
-        mode (str): plus_one: increase all indexing by 1
-                    minus_one: reduce all indexing by 1
+    Parameters
+    ----------
+    rxn_smi : str
+        Input atom-mapped reaction smiles.
+    mode : str
+        plus_one: increase all indexing by 1
+        minus_one: reduce all indexing by 1
 
-    Returns:
-        str: re-numbered smi string
+    Returns
+    -------
+    str
+        Re-numbered smi string.
     """
 
     def decrement(m):
@@ -67,11 +72,15 @@ def determine_atom_map_smi_indexing(
     Helper function to determine the starting index of an atom mapped reaction smile.
     Expect either zero- or one- indexing.
 
-    Args:
-        rxn_smi (str): input atom-mapped reaction smiles
+    Parameters
+    ----------
+    rxn_smi : str
+        Input atom-mapped reaction smiles.
 
-    Returns:
-        int: starting index
+    Returns
+    -------
+    int
+        Starting index.
     """
 
     # Extract all integers from the string
@@ -87,11 +96,15 @@ def split_rxn_smi(
     """
     Split a given reaction smile into reactant and product smiles in lists.
 
-    Args:
-        rxn_smi (str): input reaction smiles
+    Parameters
+    ----------
+    rxn_smi : str
+        Input reaction smiles.
 
-    Returns:
-        Union[List[str], List[str]]: smiles of individual reactants and products, in sepearte lists
+    Returns
+    -------
+    Union[List[str], List[str]]
+        Smiles of individual reactants and products, in separate lists.
     """
 
     reactants = rxn_smi.split(">>")[0].split(".")
@@ -108,23 +121,29 @@ def reorder_reaction_smile(
     """
     Preprocess a reaction smile to a specified order by user.
 
-    This function will seperate a reaction smile into speices, then reorder them into
+    This function will separate a reaction smile into species, then reorder them into
     reactants and products based on SMARTS patterns specified by user, and finally
     return the ordered new reaction smile.
 
     Note: use NONE_GROUP if you do not care about which species to be matched in a
     particular position. Do not use a wild card [*] for this purpose, for it will match
     any species and the logic in this function does not work well with it.
-          Make sure to test this function. It is common to make mistakes in SMARTS.
+    Make sure to test this function. It is common to make mistakes in SMARTS.
 
-    Input:
-        rxn_smi: atom-mapped reaction smiles
-        r_pattern (optional): SMARTS pattern for matching reactants, length must match
-        number of reactants in rxn_smi
-        p_pattern (optional): SMARTS pattern for matching products, length must match
-        number of products in rxn_smi
+    Parameters
+    ----------
+    rxn_smi : str
+        Atom-mapped reaction smiles.
+    r_pattern : Optional[List[str]], optional
+        SMARTS pattern for matching reactants, length must match number of reactants in
+        rxn_smi.
+    p_pattern : Optional[List[str]], optional
+        SMARTS pattern for matching products, length must match number of products in
+        rxn_smi.
 
-    Output:
+    Returns
+    -------
+    str
         New reaction smiles with species match the order of the pattern specified.
     """
 
@@ -226,12 +245,15 @@ def isomorphic_check(
     """
     Compare if two rdkit molecules are the same.
 
-    Args:
-        mol1 (RDKitMol)
-        mol2 (RDKitMol)
+    Parameters
+    ----------
+    mol1 : RDKitMol
+    mol2 : RDKitMol
 
-    Returns:
-        bool: True if the same.
+    Returns
+    -------
+    bool
+        True if the same.
     """
 
     return mol1.HasSubstructMatch(mol2) and mol2.HasSubstructMatch(mol1)
@@ -242,13 +264,20 @@ def get_ordered_integers(
     sorted: bool = False,
 ) -> List[int]:
     """
-    Get integers ordered by occurence from a string. Useful to extract atom mapping from smiles.
+    Get integers ordered by occurrence from a string. Useful to extract atom mapping
+    from smiles.
 
-    Args:
-        rxn_smi (str): atom-mapped reaction smiles
+    Parameters
+    ----------
+    rxn_smi : str
+        Atom-mapped reaction smiles.
+    sorted : bool, optional
+        Whether to sort the integers, by default False.
 
-    Returns:
-        List[int]: extracted integer list
+    Returns
+    -------
+    List[int]
+        Extracted integer list.
     """
 
     # Extract all integers from the string
@@ -260,6 +289,23 @@ def get_ordered_integers(
 
 
 def get_neighbour_atom(mol, center_atom_idx, exlude_atom_idx_list=None):
+    """
+    Get neighboring atoms of a given atom in a molecule.
+
+    Parameters
+    ----------
+    mol : RDKitMol
+        The molecule.
+    center_atom_idx : int
+        Index of the center atom.
+    exlude_atom_idx_list : list, optional
+        List of atom indices to exclude, by default None.
+
+    Returns
+    -------
+    dict
+        Dictionary of neighboring atom indices and their symbols.
+    """
     neighbour = {
         nb.GetIdx(): mol.GetAtomWithIdx(nb.GetIdx()).GetSymbol()
         for nb in mol.GetAtomWithIdx(center_atom_idx).GetNeighbors()
@@ -274,6 +320,23 @@ def get_neighbour_atom(mol, center_atom_idx, exlude_atom_idx_list=None):
 
 
 def find_fragment(mol, center_atom_idx, exlude_atom_idx_list):
+    """
+    Find the fragment of a molecule centered around a given atom.
+
+    Parameters
+    ----------
+    mol : RDKitMol
+        The molecule.
+    center_atom_idx : int
+        Index of the center atom.
+    exlude_atom_idx_list : list
+        List of atom indices to exclude.
+
+    Returns
+    -------
+    dict
+        Dictionary of fragment atom indices and their symbols.
+    """
     frag = dict()
     max_frag_size = len(mol.GetAtomicNumbers())
     center_atom = {center_atom_idx: mol.GetAtomWithIdx(center_atom_idx).GetSymbol()}
@@ -307,15 +370,17 @@ def perceive_rxn_generate_complex(
     rxn_smi: str,
 ) -> dict:
     """
-    perceive_rxn_generate_complex _summary_
+    Perceive reaction and generate complex.
 
-    _extended_summary_
+    Parameters
+    ----------
+    rxn_smi : str
+        Atom-mapped reaction smiles.
 
-    Args:
-        rxn_smi (str): _description_
-
-    Returns:
-        dict: _description_
+    Returns
+    -------
+    dict
+        Dictionary containing reaction information and complexes.
     """
 
     # generate reactant and product complex RDkitMOl from smiles, atoms are always
