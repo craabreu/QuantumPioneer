@@ -86,7 +86,7 @@ file = "QuantumPioneer/_version.py"
 
 [tool.ruff]
 line-length = 88
-select = [
+lint.select = [
     "E",  # Errors
     "W",  # Warnings
     "F",  # Failures
@@ -98,6 +98,9 @@ select = [
     "UP",  # Unused Parameters
     "PL"  # Plugin Lints
 ]
+
+[tool.ruff.lint.pylint]
+allow-magic-value-types = ["int", "str"]
 
 [tool.pytest.ini_options]
 minversion = "7.0"

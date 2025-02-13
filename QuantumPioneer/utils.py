@@ -4,7 +4,7 @@ import typing as t
 
 import numpy as np
 from rdkit import Chem
-from rdkit.Chem import AllChem, MolFromSmiles
+from rdkit.Chem import AllChem
 from rdmc import RDKitMol
 from rdmc.ts import get_formed_and_broken_bonds
 
@@ -55,9 +55,9 @@ def adjust_atom_map_smi_indexing(
     # atom index. Sometimes, SMILES strings include numbers to indicate connectivity
     # i.e. in rings.
     if mode == "plus_one":
-        new_smi = re.sub(r"\d+]", lambda m: increment(m), rxn_smi)
+        new_smi = re.sub(r"\d+]", increment, rxn_smi)
     elif mode == "minus_one":
-        new_smi = re.sub(r"\d+]", lambda m: decrement(m), rxn_smi)
+        new_smi = re.sub(r"\d+]", decrement, rxn_smi)
     else:
         raise ValueError(
             f"Specificed mode {mode} not recognized. "
@@ -150,86 +150,64 @@ def reorder_reaction_smile(
     """
 
     # return original smile if no pattern to match
-    if not any([len(r_pattern), len(p_pattern)]):
+    if not (r_pattern or p_pattern):
         return rxn_smi
 
     # get reactants and products from provided smi
-    _reactants, _products = split_rxn_smi(rxn_smi=rxn_smi)
+    _reactants, _products = split_rxn_smi(rxn_smi)
 
     # raise if provided number of patterns mismatch given smi
-    if not all([len(_reactants) == len(r_pattern), len(_products) == len(p_pattern)]):
+    if len(_reactants) != len(r_pattern) or len(_products) != len(p_pattern):
         raise ValueError(
             "Provided number of patterns does not match number of species "
             "in the given reaction."
         )
 
-    # turn smi into rdkit molecule for matching
-    _r_mols = [MolFromSmiles(smi) for smi in _reactants]
-    _p_mols = [MolFromSmiles(smi) for smi in _products]
-
-    reactants = []
-    products = []
-
-    # match reactant pattern
-    for pattern in r_pattern:
-        # turn pattern into rdkit molecule for substructure matching
-        patt = Chem.MolFromSmarts(pattern)
-        try:
-            # return species index of the first match
-            matched_idx = [
-                bool(x) for x in [mol.GetSubstructMatch(patt) for mol in _r_mols]
-            ].index(True)
-        except ValueError:
-            # NONE_group means the user does not care about which species ge
-            if NONE_GROUP in r_pattern:
-                # matched in the current index
-                # place holder for index/order keeping, will be replaced by leftover
-                reactants.append(None)
-                # species later
-                continue
-            else:
+    def match_patterns(smis, patterns):
+        smis = smis[:]
+        # turn smi into rdkit molecule for matching
+        mols = list(map(Chem.MolFromSmiles, smis))
+        matched = []
+        for pattern in patterns:
+            # turn pattern into rdkit molecule for substructure matching
+            patt = Chem.MolFromSmarts(pattern)
+            try:
+                # return species index of the first match
+                matched_idx = next(
+                    i for i, x in enumerate(mols) if x.GetSubstructMatch(patt)
+                )
+            except StopIteration as e:
+                if NONE_GROUP in patterns:
+                    # NONE_group means the user does not care about which species get
+                    # matched in the current index
+                    # place holder for index/order keeping, will be replaced by leftover
+                    # species later
+                    matched.append(None)
+                    continue
                 raise ValueError(
                     f"Pattern {pattern} not found in provided reaction species."
-                )
+                ) from e
 
-        # add matched species to new reactants list
-        reactants.append(_reactants[matched_idx])
-        _r_mols.pop(matched_idx)
-        _reactants.pop(matched_idx)
-    # this means the user does not care about species order
-    if reactants == [None, None]:
-        # so we leave order unchanged
-        reactants = _reactants
-    # one of the species can be any left over species
-    elif None in reactants:
-        # replace the place holder with left over species
-        reactants[reactants.index(None)] = _reactants[0]
+            # add matched species to new reactants list
+            matched.append(smis[matched_idx])
+            mols.pop(matched_idx)
+            smis.pop(matched_idx)
 
-    # match product pattern, same logic as reactant
-    for pattern in p_pattern:
-        patt = Chem.MolFromSmarts(pattern)
-        try:
-            matched_idx = [
-                bool(x) for x in [mol.GetSubstructMatch(patt) for mol in _p_mols]
-            ].index(True)
-        except ValueError:
-            if NONE_GROUP in p_pattern:
-                products.append(None)
-                continue
-            else:
-                raise ValueError(
-                    f"Pattern {pattern} not found in provided reaction species."
-                )
-        products.append(_products[matched_idx])
-        _p_mols.pop(matched_idx)
-        _products.pop(matched_idx)
-    if products == [None, None]:
-        products = _products
-    elif None in products:
-        products[products.index(None)] = _products[0]
+        # this means the user does not care about species order
+        if matched == [None, None]:
+            # so we leave order unchanged
+            matched = smis
+        # one of the species can be any left over species
+        elif None in matched:
+            # replace the place holder with left over species
+            matched[matched.index(None)] = smis[0]
 
-    ordered_rxn_smi = ".".join(reactants) + ">>" + ".".join(products)
-    return ordered_rxn_smi
+        return matched
+
+    reactants = match_patterns(_reactants, r_pattern)
+    products = match_patterns(_products, p_pattern)
+
+    return ".".join(reactants) + ">>" + ".".join(products)
 
 
 def isomorphic_check(
