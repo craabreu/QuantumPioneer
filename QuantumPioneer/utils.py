@@ -199,16 +199,15 @@ def reorder_reaction_smile(
         )  # add matched species to new reactants list
         _r_mols.pop(matched_idx)
         _reactants.pop(matched_idx)
-    else:
-        if reactants == [
-            None,
-            None,
-        ]:  # this means the user does not care about species order
-            reactants = _reactants  # so we leave order unchanged
-        elif None in reactants:  # one of the species can be any left over species
-            reactants[reactants.index(None)] = _reactants[
-                0
-            ]  # replace the place holder with left over species
+    if reactants == [
+        None,
+        None,
+    ]:  # this means the user does not care about species order
+        reactants = _reactants  # so we leave order unchanged
+    elif None in reactants:  # one of the species can be any left over species
+        reactants[reactants.index(None)] = _reactants[
+            0
+        ]  # replace the place holder with left over species
 
     # match product pattern, same logic as reactant
     for pattern in p_pattern:
@@ -228,11 +227,10 @@ def reorder_reaction_smile(
         products.append(_products[matched_idx])
         _p_mols.pop(matched_idx)
         _products.pop(matched_idx)
-    else:
-        if products == [None, None]:
-            products = _products
-        elif None in products:
-            products[products.index(None)] = _products[0]
+    if products == [None, None]:
+        products = _products
+    elif None in products:
+        products[products.index(None)] = _products[0]
 
     ordered_rxn_smi = ".".join(reactants) + ">>" + ".".join(products)
     return ordered_rxn_smi
@@ -361,9 +359,8 @@ def find_fragment(mol, center_atom_idx, exlude_atom_idx_list):
             if len(frag.keys()) >= max_frag_size:
                 frag.update(center_atom)
                 return frag
-    else:
-        frag.update(center_atom)
-        return frag
+    frag.update(center_atom)
+    return frag
 
 
 def perceive_rxn_generate_complex(
@@ -420,8 +417,7 @@ def perceive_rxn_generate_complex(
     for i, x in enumerate(_frags_r_atom_map):
         idx = _reactants_atom_map.index(x)
         frags_r[idx] = _frags_r[i]
-    else:
-        frags_r = tuple(frags_r)
+    frags_r = tuple(frags_r)
 
     p_complex_atom_map = p_complex.GetAtomMapNumbers()
     _frags_p_atom_map = [[p_complex_atom_map[i] for i in x] for x in _frags_p]
@@ -429,15 +425,14 @@ def perceive_rxn_generate_complex(
     for i, x in enumerate(_frags_p_atom_map):
         idx = _products_atom_map.index(x)
         frags_p[idx] = _frags_p[i]
-    else:
-        frags_p = tuple(frags_p)
+    frags_p = tuple(frags_p)
 
     # re-arrange pivot_atoms to match the reactants ordered in the smi;
     # pivot = R1 -- H(TS) -- R2; e.g., pivot = [15, 7] means atom with index 15 in R1
     # and index 7 in R2 are atoms in the reaction coordinate
     for i, x in enumerate(_pivot_atoms):
         idx = [x in f for f in frags_r].index(True)
-        pivot_atoms[idx] = _pivot_atoms[i]
+        pivot_atoms[idx] = x
 
     # embed 3D geometry for reactants and products
     r_complex.EmbedConformer(
