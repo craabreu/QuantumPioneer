@@ -6,7 +6,7 @@ import numpy as np
 from rdkit import Chem
 from rdkit.Chem import AllChem
 from rdmc import RDKitMol
-from rdmc.ts import get_formed_and_broken_bonds
+from rdmc import ts as rdmc_ts
 
 FF = AllChem.ETKDGv3()
 # this make sure we get different embedding each time
@@ -360,7 +360,7 @@ def perceive_rxn_generate_complex(
 
     # perceive reaction center
     # formed, broken bonds indices e.g., fbond = [(1, 3)] means a bond forms between
-    fbond, bbond = get_formed_and_broken_bonds(r_complex, p_complex)
+    fbond, bbond = rdmc_ts.get_formed_and_broken_bonds(r_complex, p_complex)
     # atom with index 1 and 3, notice that atoms are zero-indexed and reaction is
     # analyzed in the forward direction
     # the H atom index in the TS
