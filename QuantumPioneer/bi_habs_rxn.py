@@ -1,20 +1,13 @@
+import copy
 import itertools as it
 
 import numpy as np
 from rdkit.Chem import AllChem
 from rdmc import RDKitMol
-from rdmc import forcefield as rdmc_ff
 from rdmc import ts as rdmc_ts
-
-from QuantumPioneer import utils as qp_utils
-
-from rdmc import RDKitMol
-
 from rdmc.forcefield import RDKitFF
 
-import numpy as np
-import copy
-
+from QuantumPioneer import utils as qp_utils
 
 FF = AllChem.ETKDGv3()
 # this make sure we get different embedding each time
@@ -44,299 +37,6 @@ _DEFAULT_TS_GUESS_PARAMETERS = {
     # directly specifiy the TS bond length for r2
     "bond_length_H_Y": None,
 }
-
-
-
-# %%
-# this function calcualte R-H bond distances for closed-shell reactant/product species based on averaging of N conformers embedded from force field
-# a helper function used in gen_ts
-def return_opt_spc_bond_distance(
-    spc_smi,
-    pivot_atom,
-    the_h_atom,
-    atom_map_idx,
-    averaged = 5,
-    ):
-
-    """
-    Return the optimized bond distance of reacting R-H from reactant/product species. Only use on non-radical RH species.
-    """
-
-    bd_list = list()
-
-    while averaged:
-        r = RDKitMol.FromSmiles(spc_smi)
-        ff = RDKitFF('mmff94s')
-        r.EmbedConformer(qp_utils.FF)
-        ff.setup(r)
-        ff.optimize()
-        m = ff.get_optimized_mol()
-
-        r_conf = r.GetConformer()
-        r_conf.SetPositions(m.GetPositions())
-
-        h_idx = atom_map_idx.index(the_h_atom)
-        pivot_idx = atom_map_idx.index(pivot_atom)
-
-        bd = r_conf.GetBondLength([h_idx, pivot_idx])
-        bd_list.append(bd)
-        averaged -= 1
-
-    return sum(bd_list)/len(bd_list)
-
-# %%
-def initialize_ts_guess_geometry(
-    empirical_para_dict,
-    species_complex_dict,
-):
-
-    _reactants, _products = qp_utils.split_rxn_smi(rxn_smi=species_complex_dict['rxn_smi'])
-    ts_conformer = species_complex_dict['ts_complex'].GetConformer()
-
-    # set TS bond distances
-    # update bond distance of r1 -- H(ts)
-    # step 1: find the reacting bond distance of r1 when it's not in the TS based on averaging of 10 conformers
-    r1_dist = return_opt_spc_bond_distance(spc_smi = _reactants[0],
-                            pivot_atom = species_complex_dict['ts_pivot_indices'][0],
-                            the_h_atom = species_complex_dict['ts_h_index'][0],
-                            atom_map_idx = species_complex_dict['r_fragment_indices'][0],
-                            )
-
-    # step 2: scale the reacting bond with a scaling factor, the factor is provided by user currently, but it can be learned since it depends on reactant/product type (usually 25% is good starting guess for C-H, 15% for O-H etc)
-    bond_length_X_H = r1_dist * empirical_para_dict['bond_length_scale_factor_r1']
-
-    # step 3: set bond length for the TS complex
-    ts_conformer.SetBondLength([species_complex_dict['ts_pivot_indices'][0],
-                                                      species_complex_dict['ts_h_index'][0],
-                                                      ],
-                                                     bond_length_X_H)
-
-    # update bond distance of H(ts) -- r2
-    r2_dist = return_opt_spc_bond_distance(spc_smi = _products[1],
-                            pivot_atom = species_complex_dict['ts_pivot_indices'][1],
-                            the_h_atom = species_complex_dict['ts_h_index'][0],
-                            atom_map_idx = species_complex_dict['p_fragment_indices'][1],
-                            )
-
-
-    bond_length_H_Y = r2_dist * empirical_para_dict['bond_length_scale_factor_r2']
-
-    ts_conformer.SetBondLength([species_complex_dict['ts_pivot_indices'][1],
-                                                      species_complex_dict['ts_h_index'][0],
-                                                      ],
-                                                     bond_length_H_Y)
-
-
-    # set TS angle
-    ts_conformer.SetAngleDeg([species_complex_dict['ts_pivot_indices'][0],
-                                                    species_complex_dict['ts_h_index'][0],
-                                                    species_complex_dict['ts_pivot_indices'][1]],
-                                                    empirical_para_dict['angle_X_H_Y']) # angle_X_H_Y can be learned, but usually 160 deg is good for most bi-mol H abs family
-
-    # set TS dihedral
-    # note: there are two sets of dihedrals for the TS, since a dihedral is defined by 4 connecting atoms, and there are 5 atoms connected in the TS region, thus 2 sets of dihedrals
-
-    # set dihedrals
-    # note: the dihedrals can actually be searched or learned, but not implemented yet, currently we set to user provided value
-    ts_conformer.SetTorsionDeg([species_complex_dict['r1_neighbour_indices'][0],
-                                                      species_complex_dict['ts_pivot_indices'][0],
-                                                      species_complex_dict['ts_h_index'][0],
-                                                      species_complex_dict['ts_pivot_indices'][1],
-                                                      ],
-                                                     empirical_para_dict['dihedral_r1'])
-
-    ts_conformer.SetTorsionDeg([species_complex_dict['ts_pivot_indices'][0],
-                                                      species_complex_dict['ts_h_index'][0],
-                                                      species_complex_dict['ts_pivot_indices'][1],
-                                                      species_complex_dict['r2_neighbour_indices'][0],
-                                                      ],
-                                                     empirical_para_dict['dihedral_r2'])
-
-    return species_complex_dict
-
-# %%
-# this function check if the TS guess has atoms colliding with each other
-# 0.4 anstrom is an empirical parameter
-def check_hard_collision(ts, threshold=0.4):
-    if ts.HasCollidingAtoms(threshold=threshold):
-        raise ValueError('Atom collision detected.')
-
-# %%
-# a helper function to optimize the transition state using force field
-# note: this is a constrained optimization that fixes the two TS bond distances first,
-# then, we optimize the geometry to a stable point to relax it (not to a saddle point as in typical ts search)
-# the idea here is to relax each fragment of the ts to make the geometry more reasonable
-def opt_ts_ff(species_complex_dict):
-
-    ts_complex = species_complex_dict['ts_complex']
-    ts_conformer = ts_complex.GetConformer()
-
-    bond_length_X_H = ts_conformer.GetBondLength(species_complex_dict['broken_bond'][0])
-    bond_length_H_Y = ts_conformer.GetBondLength(species_complex_dict['formed_bond'][0])
-
-    ff = RDKitFF('mmff94s')
-    fake_ts = RDKitMol.FromSmiles(species_complex_dict['rxn_smi'].split('>>')[0])
-    fake_ts.EmbedConformer()
-    fake_ts.SetPositions(ts_complex.GetPositions())
-    ff.setup(fake_ts)
-
-    the_h_atom = species_complex_dict['ts_h_index'][0]
-    pivot_atom_r1 = species_complex_dict['ts_pivot_indices'][0]
-    pivot_atom_r2 = species_complex_dict['ts_pivot_indices'][1]
-
-    ff.add_distance_constraint(atoms=[the_h_atom,pivot_atom_r1], value=bond_length_X_H)
-    ff.add_distance_constraint(atoms=[the_h_atom,pivot_atom_r2], value=bond_length_H_Y)
-
-    ff.optimize()
-    m = ff.get_optimized_mol()
-
-    ts_new = copy.deepcopy(ts_complex)
-    ts_new.SetPositions(m.GetPositions())
-
-    return ts_new
-
-# %%
-# this function check if two parts of the TS are too close to each other
-# since the TS bond distance is about 1.3 anstrom for C-H, if two fragements are closer than this, additional bonds may form (collision)
-def check_fragment_collision(ts, h_idx, threshold=1.3):
-    distance_matrix = np.triu(ts.GetDistanceMatrix())
-    index = h_idx # atom index of the ts h
-    fragment_bond_distance_matrix = distance_matrix[0:index, index:] # check if two fragments are too close to each other
-    if np.any(fragment_bond_distance_matrix < threshold):
-        raise ValueError('Reactants collision detected.')
-    else:
-        small_distances = fragment_bond_distance_matrix[fragment_bond_distance_matrix < 2]
-        relax_score = np.sum((small_distances-2)**2) + np.min(small_distances) + np.max(fragment_bond_distance_matrix) + np.median(fragment_bond_distance_matrix) + np.average(fragment_bond_distance_matrix)
-        relax_score = relax_score / (5 * np.max(fragment_bond_distance_matrix))
-        return relax_score # notice that we return a score where the larger the score, the more seperated the two fragments of the TS are (ideal for initial guess)
-
-# %%
-def generate_bi_habs_ts_guess(
-           rxn_smi,
-           empirical_para_dict,
-):
-    """
-    generate_bi_habs_ts_guess _summary_
-
-    _extended_summary_
-
-    Args:
-        rxn_smi (_type_): _description_
-        angle_X_H_Y (_type_): _description_
-        dihedral_r1 (_type_): _description_
-        dihedral_r2 (_type_): _description_
-        bond_length_scale_factor_r1 (_type_): _description_
-        bond_length_scale_factor_r2 (_type_): _description_
-        bond_length_X_H (_type_, optional): _description_. Defaults to None.
-        bond_length_H_Y (_type_, optional): _description_. Defaults to None.
-    """
-
-    # perceive reaction and generate reactants, products, and TS complexes
-    # species_complex_dict = qp_utils.perceive_rxn_generate_complex(rxn_smi=rxn_smi)
-    rxn = BimolecularHydrogenAbstractionReaction(rxn_smi)
-    species_complex_dict = rxn.__dict__
-
-    # initialize ts guess geometry
-    species_complex_dict = initialize_ts_guess_geometry(
-        empirical_para_dict = empirical_para_dict,
-        species_complex_dict = species_complex_dict,)
-
-    # optimize ts guess
-    ts_new = opt_ts_ff(species_complex_dict=species_complex_dict)
-
-    check_hard_collision(ts_new)
-
-    bond_length_X_H = ts_new.GetConformer().GetBondLength(species_complex_dict['broken_bond'][0])
-    bond_length_H_Y = ts_new.GetConformer().GetBondLength(species_complex_dict['formed_bond'][0])
-
-    threshold = min([bond_length_X_H, bond_length_H_Y]) * 0.98
-    relax_score = check_fragment_collision(ts_new, species_complex_dict['ts_h_index'][0], threshold=threshold)
-
-    return relax_score, ts_new, species_complex_dict
-
-# %%
-# a helper function to attempt to generate N valid TS guesses, each with a score upto some max iteration
-# expensive step, can be optimized
-def gen_n_ts_confs(
-           rxn_smi,
-           empirical_para_dict,
-           num_confs = 10,
-           max_total_iter = 50,
-):
-
-    result = list()
-    result_count = len(result)
-
-    iter_counter = 0
-    while result_count < num_confs and iter_counter < max_total_iter:
-        try:
-            relax_score, ts_new, species_complex_dict = generate_bi_habs_ts_guess(rxn_smi=rxn_smi, empirical_para_dict=empirical_para_dict)
-
-            if all([relax_score, ts_new]):
-                xyz = ts_new.ToXYZ()
-                g_xyz = "\n".join([l for l in xyz.splitlines()[2:]]) + "\n\n"
-                result.append(tuple([relax_score, g_xyz]))
-        except:
-            pass
-        finally:
-            iter_counter += 1
-            result_count = len(result)
-
-    if not result:
-        raise ValueError('Failed to generate TS conformers.')
-    else:
-        result.sort(key=lambda y:y[0])
-
-    output = dict()
-    output = copy.deepcopy(species_complex_dict)
-    del output['r_complex']
-    del output['p_complex']
-    del output['ts_complex']
-    result_g_xyz = [x[-1] for x in result]
-    score_dist = [x[0] for x in result]
-    ts_conformers_coord = tuple([(k, v) for k, v in zip(score_dist, result_g_xyz)])
-    output['ts_conformers_coord'] = ts_conformers_coord
-
-    return output
-
-
-
-# # this function calcualte R-H bond distances for closed-shell reactant/product species
-# # based on averaging of N conformers embedded from force field
-# # a helper function used in gen_ts
-# def return_opt_spc_bond_distance(
-#     spc_smi,
-#     pivot_atom,
-#     the_h_atom,
-#     atom_map_idx,
-#     averaged=5,
-# ):
-#     """
-#     Return the optimized bond distance of reacting R-H from reactant/product species.
-#     Only use on non-radical RH species.
-#     """
-
-#     bd_list = []
-
-#     while averaged:
-#         r = RDKitMol.FromSmiles(spc_smi)
-#         ff = rdmc_ff.RDKitFF("mmff94s")
-#         r.EmbedConformer(qp_utils.FF)
-#         ff.setup(r)
-#         ff.optimize()
-#         m = ff.get_optimized_mol()
-
-#         r_conf = r.GetConformer()
-#         r_conf.SetPositions(m.GetPositions())
-
-#         h_idx = atom_map_idx.index(the_h_atom)
-#         pivot_idx = atom_map_idx.index(pivot_atom)
-
-#         bd = r_conf.GetBondLength([h_idx, pivot_idx])
-#         bd_list.append(bd)
-#         averaged -= 1
-
-#     return sum(bd_list) / len(bd_list)
 
 
 class BimolecularHydrogenAbstractionReaction:
@@ -509,96 +209,303 @@ class BimolecularHydrogenAbstractionReaction:
         self.r1_neighbour_indices = r1_neighbour_indices
         self.r2_neighbour_indices = r2_neighbour_indices
 
-    # def initialize_ts_guess_geometry(self):
-    #     species_complex_dict = self.__dict__
-    #     empirical_para_dict = self._ts_guess_parameters
+    @staticmethod
+    def _return_opt_spc_bond_distance(
+        spc_smi,
+        pivot_atom,
+        the_h_atom,
+        atom_map_idx,
+        averaged=5,
+    ):
+        """
+        Return the optimized bond distance of reacting R-H from reactant/product
+        species.
+        Only use on non-radical RH species.
 
-    #     _reactants, _products = qp_utils.split_rxn_smi(
-    #         rxn_smi=species_complex_dict["rxn_smi"]
-    #     )
-    #     ts_conformer = species_complex_dict["ts_complex"].GetConformer()
+        This function calcualte R-H bond distances for closed-shell reactant/product
+        species based on averaging of N conformers embedded from force field a helper
+        function used in gen_ts
+        """
 
-    #     # set TS bond distances
-    #     # update bond distance of r1 -- H(ts)
-    #     # step 1: find the reacting bond distance of r1 when it's not in the TS based
-    #     # on averaging of 10 conformers
-    #     r1_dist = return_opt_spc_bond_distance(
-    #         spc_smi=_reactants[0],
-    #         pivot_atom=species_complex_dict["ts_pivot_indices"][0],
-    #         the_h_atom=species_complex_dict["ts_h_index"][0],
-    #         atom_map_idx=species_complex_dict["r_fragment_indices"][0],
-    #     )
+        bd_list = []
 
-    #     # step 2: scale the reacting bond with a scaling factor, the factor is provided
-    #     # by user currently, but it can be learned since it depends on reactant/product
-    #     # type (usually 25% is good starting guess for C-H, 15% for O-H etc)
-    #     bond_length_X_H = r1_dist * empirical_para_dict["bond_length_scale_factor_r1"]
+        while averaged:
+            r = RDKitMol.FromSmiles(spc_smi)
+            ff = RDKitFF("mmff94s")
+            r.EmbedConformer(qp_utils.FF)
+            ff.setup(r)
+            ff.optimize()
+            m = ff.get_optimized_mol()
 
-    #     # step 3: set bond length for the TS complex
-    #     ts_conformer.SetBondLength(
-    #         [
-    #             species_complex_dict["ts_pivot_indices"][0],
-    #             species_complex_dict["ts_h_index"][0],
-    #         ],
-    #         bond_length_X_H,
-    #     )
+            r_conf = r.GetConformer()
+            r_conf.SetPositions(m.GetPositions())
 
-    #     # update bond distance of H(ts) -- r2
-    #     r2_dist = return_opt_spc_bond_distance(
-    #         spc_smi=_products[1],
-    #         pivot_atom=species_complex_dict["ts_pivot_indices"][1],
-    #         the_h_atom=species_complex_dict["ts_h_index"][0],
-    #         atom_map_idx=species_complex_dict["p_fragment_indices"][1],
-    #     )
+            h_idx = atom_map_idx.index(the_h_atom)
+            pivot_idx = atom_map_idx.index(pivot_atom)
 
-    #     bond_length_H_Y = r2_dist * empirical_para_dict["bond_length_scale_factor_r2"]
+            bd = r_conf.GetBondLength([h_idx, pivot_idx])
+            bd_list.append(bd)
+            averaged -= 1
 
-    #     ts_conformer.SetBondLength(
-    #         [
-    #             species_complex_dict["ts_pivot_indices"][1],
-    #             species_complex_dict["ts_h_index"][0],
-    #         ],
-    #         bond_length_H_Y,
-    #     )
+        return sum(bd_list) / len(bd_list)
 
-    #     # set TS angle
-    #     # angle_X_H_Y can be learned, but usually 160 deg is good for most bi-mol
-    #     # H abs family
-    #     ts_conformer.SetAngleDeg(
-    #         [
-    #             species_complex_dict["ts_pivot_indices"][0],
-    #             species_complex_dict["ts_h_index"][0],
-    #             species_complex_dict["ts_pivot_indices"][1],
-    #         ],
-    #         empirical_para_dict["angle_X_H_Y"],
-    #     )
+    def _initialize_ts_guess_geometry(self):
+        _reactants, _products = qp_utils.split_rxn_smi(rxn_smi=self.rxn_smi)
+        ts_conformer = self.ts_complex.GetConformer()
 
-    #     # set TS dihedral
-    #     # note: there are two sets of dihedrals for the TS, since a dihedral is defined
-    #     # by 4 connecting atoms, and there are 5 atoms connected in the TS region, thus
-    #     # 2 sets of dihedrals
+        # set TS bond distances
+        # update bond distance of r1 -- H(ts)
+        # step 1: find the reacting bond distance of r1 when it's not in the TS based
+        # on averaging of 10 conformers
+        r1_dist = self._return_opt_spc_bond_distance(
+            spc_smi=_reactants[0],
+            pivot_atom=self.ts_pivot_indices[0],
+            the_h_atom=self.ts_h_index[0],
+            atom_map_idx=self.r_fragment_indices[0],
+        )
 
-    #     # set dihedrals
-    #     # note: the dihedrals can actually be searched or learned, but not implemented
-    #     # yet, currently we set to user provided value
-    #     ts_conformer.SetTorsionDeg(
-    #         [
-    #             species_complex_dict["r1_neighbour_indices"][0],
-    #             species_complex_dict["ts_pivot_indices"][0],
-    #             species_complex_dict["ts_h_index"][0],
-    #             species_complex_dict["ts_pivot_indices"][1],
-    #         ],
-    #         empirical_para_dict["dihedral_r1"],
-    #     )
+        # step 2: scale the reacting bond with a scaling factor, the factor is provided
+        # by user currently, but it can be learned since it depends on reactant/product
+        # type (usually 25% is good starting guess for C-H, 15% for O-H etc)
+        bond_length_X_H = (
+            r1_dist * self._ts_guess_parameters["bond_length_scale_factor_r1"]
+        )
 
-    #     ts_conformer.SetTorsionDeg(
-    #         [
-    #             species_complex_dict["ts_pivot_indices"][0],
-    #             species_complex_dict["ts_h_index"][0],
-    #             species_complex_dict["ts_pivot_indices"][1],
-    #             species_complex_dict["r2_neighbour_indices"][0],
-    #         ],
-    #         empirical_para_dict["dihedral_r2"],
-    #     )
+        # step 3: set bond length for the TS complex
+        ts_conformer.SetBondLength(
+            [
+                self.ts_pivot_indices[0],
+                self.ts_h_index[0],
+            ],
+            bond_length_X_H,
+        )
 
-    #     return species_complex_dict
+        # update bond distance of H(ts) -- r2
+        r2_dist = self._return_opt_spc_bond_distance(
+            spc_smi=_products[1],
+            pivot_atom=self.ts_pivot_indices[1],
+            the_h_atom=self.ts_h_index[0],
+            atom_map_idx=self.p_fragment_indices[1],
+        )
+
+        bond_length_H_Y = (
+            r2_dist * self._ts_guess_parameters["bond_length_scale_factor_r2"]
+        )
+
+        ts_conformer.SetBondLength(
+            [
+                self.ts_pivot_indices[1],
+                self.ts_h_index[0],
+            ],
+            bond_length_H_Y,
+        )
+
+        # set TS angle
+        # angle_X_H_Y can be learned, but usually 160 deg is good for most bi-mol
+        # H abs family
+        ts_conformer.SetAngleDeg(
+            [
+                self.ts_pivot_indices[0],
+                self.ts_h_index[0],
+                self.ts_pivot_indices[1],
+            ],
+            self._ts_guess_parameters["angle_X_H_Y"],
+        )
+
+        # set TS dihedral
+        # note: there are two sets of dihedrals for the TS, since a dihedral is defined
+        # by 4 connecting atoms, and there are 5 atoms connected in the TS region, thus
+        # 2 sets of dihedrals
+
+        # set dihedrals
+        # note: the dihedrals can actually be searched or learned, but not implemented
+        # yet, currently we set to user provided value
+        ts_conformer.SetTorsionDeg(
+            [
+                self.r1_neighbour_indices[0],
+                self.ts_pivot_indices[0],
+                self.ts_h_index[0],
+                self.ts_pivot_indices[1],
+            ],
+            self._ts_guess_parameters["dihedral_r1"],
+        )
+
+        ts_conformer.SetTorsionDeg(
+            [
+                self.ts_pivot_indices[0],
+                self.ts_h_index[0],
+                self.ts_pivot_indices[1],
+                self.r2_neighbour_indices[0],
+            ],
+            self._ts_guess_parameters["dihedral_r2"],
+        )
+
+    def _optimize_ts_using_force_field(self):
+        """
+        A helper function to optimize the transition state using force field.
+
+        This function performs a constrained optimization that first fixes the two TS
+        bond distances, then optimizes the geometry to a stable point to relax it (not
+        to a saddle point as in typical ts search). The idea behind this is to relax
+        each fragment of the TS to make the geometry more reasonable.
+
+        Parameters
+        ----------
+        species_complex_dict : dict
+            A dictionary containing information about the species complex.
+        """
+        ts_complex = self.ts_complex
+        ts_conformer = ts_complex.GetConformer()
+
+        bond_length_X_H = ts_conformer.GetBondLength(self.broken_bond[0])
+        bond_length_H_Y = ts_conformer.GetBondLength(self.formed_bond[0])
+
+        ff = RDKitFF("mmff94s")
+        fake_ts = RDKitMol.FromSmiles(self.rxn_smi.split(">>")[0])
+        fake_ts.EmbedConformer()
+        fake_ts.SetPositions(ts_complex.GetPositions())
+        ff.setup(fake_ts)
+
+        the_h_atom = self.ts_h_index[0]
+        pivot_atom_r1 = self.ts_pivot_indices[0]
+        pivot_atom_r2 = self.ts_pivot_indices[1]
+
+        ff.add_distance_constraint(
+            atoms=[the_h_atom, pivot_atom_r1], value=bond_length_X_H
+        )
+        ff.add_distance_constraint(
+            atoms=[the_h_atom, pivot_atom_r2], value=bond_length_H_Y
+        )
+
+        ff.optimize()
+        m = ff.get_optimized_mol()
+
+        ts_new = copy.deepcopy(ts_complex)
+        ts_new.SetPositions(m.GetPositions())
+
+        return ts_new
+
+    # this function check if the TS guess has atoms colliding with each other
+    # 0.4 anstrom is an empirical parameter
+    def check_hard_collision(ts, threshold=0.4):
+        if ts.HasCollidingAtoms(threshold=threshold):
+            raise ValueError("Atom collision detected.")
+
+    @staticmethod
+    def _check_fragment_collision(ts, h_idx, threshold=1.3):
+        """
+        This function checks if two parts of the TS are too close to each other.
+        Since the TS bond distance is about 1.3 anstrom for C-H, if two fragments are
+        closer than this, additional bonds may form (collision).
+        """
+        distance_matrix = np.triu(ts.GetDistanceMatrix())
+        index = h_idx  # atom index of the ts h
+        fragment_bond_distance_matrix = distance_matrix[
+            0:index, index:
+        ]  # check if two fragments are too close to each other
+        if np.any(fragment_bond_distance_matrix < threshold):
+            raise ValueError("Reactants collision detected.")
+        else:
+            small_distances = fragment_bond_distance_matrix[
+                fragment_bond_distance_matrix < 2
+            ]
+            relax_score = (
+                np.sum((small_distances - 2) ** 2)
+                + np.min(small_distances)
+                + np.max(fragment_bond_distance_matrix)
+                + np.median(fragment_bond_distance_matrix)
+                + np.average(fragment_bond_distance_matrix)
+            )
+            relax_score = relax_score / (5 * np.max(fragment_bond_distance_matrix))
+
+            # notice that we return a score where the larger the score, the more
+            # seperated the two fragments of the TS are (ideal for initial guess)
+            return relax_score
+
+    def generate_ts_guess(self):
+        """
+        generate_ts_guess _summary_
+
+        _extended_summary_
+
+        Args:
+            rxn_smi (_type_): _description_
+            angle_X_H_Y (_type_): _description_
+            dihedral_r1 (_type_): _description_
+            dihedral_r2 (_type_): _description_
+            bond_length_scale_factor_r1 (_type_): _description_
+            bond_length_scale_factor_r2 (_type_): _description_
+            bond_length_X_H (_type_, optional): _description_. Defaults to None.
+            bond_length_H_Y (_type_, optional): _description_. Defaults to None.
+        """
+
+        # initialize ts guess geometry
+        self._initialize_ts_guess_geometry()
+
+        # optimize ts guess
+        ts_new = self._optimize_ts_using_force_field()
+
+        if ts_new.HasCollidingAtoms(threshold=0.4):
+            raise ValueError("Atom collision detected.")
+
+        bond_length_X_H = ts_new.GetConformer().GetBondLength(self.broken_bond[0])
+        bond_length_H_Y = ts_new.GetConformer().GetBondLength(self.formed_bond[0])
+
+        threshold = min([bond_length_X_H, bond_length_H_Y]) * 0.98
+        relax_score = self._check_fragment_collision(
+            ts_new, self.ts_h_index[0], threshold=threshold
+        )
+
+        return relax_score, ts_new
+
+    def gen_n_ts_confs(
+        self,
+        num_confs=10,
+        max_total_iter=50,
+    ):
+        """
+        A helper function to attempt to generate N valid TS guesses, each with a score
+        up to some max iteration.
+        This is an expensive step that can be optimized.
+
+        Parameters
+        ----------
+        num_confs : int, optional
+            Number of conformations to generate. Defaults to 10.
+        max_total_iter : int, optional
+            Maximum total iterations to attempt. Defaults to 50.
+        """
+        result = []
+        result_count = len(result)
+
+        iter_counter = 0
+        while result_count < num_confs and iter_counter < max_total_iter:
+            relax_score, ts_new = self.generate_ts_guess()
+
+            if all([relax_score, ts_new]):
+                xyz = ts_new.ToXYZ()
+                g_xyz = "\n".join(xyz.splitlines()[2:]) + "\n\n"
+                result.append((relax_score, g_xyz))
+            # except:
+            #     pass
+            # finally:
+            iter_counter += 1
+            result_count = len(result)
+
+        if not result:
+            raise ValueError("Failed to generate TS conformers.")
+        else:
+            result.sort(key=lambda y: y[0])
+
+        output = copy.deepcopy(self.__dict__)
+        del output["r_complex"]
+        del output["p_complex"]
+        del output["ts_complex"]
+        del output["_ts_guess_parameters"]
+
+        result_g_xyz = [x[-1] for x in result]
+        score_dist = [x[0] for x in result]
+        ts_conformers_coord = tuple([(k, v) for k, v in zip(score_dist, result_g_xyz)])
+        output["ts_conformers_coord"] = ts_conformers_coord
+
+        return output
