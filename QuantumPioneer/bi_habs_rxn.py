@@ -7,7 +7,7 @@ from rdmc import RDKitMol
 from rdmc import ts as rdmc_ts
 from rdmc.forcefield import RDKitFF
 
-from QuantumPioneer import utils as qp_utils
+from QuantumPioneer import utils
 
 FF = AllChem.ETKDGv3()
 # this make sure we get different embedding each time
@@ -53,7 +53,6 @@ class BimolecularHydrogenAbstractionReaction:
     **ts_guess_parameters : dict
         Keyword arguments for transition state guess parameters.
 
-
     Attributes
     ----------
     r_complex : RDKitMol
@@ -78,25 +77,30 @@ class BimolecularHydrogenAbstractionReaction:
         Atom indices for product fragment 2 neighbors.
     """
 
-    def __init__(self, rxn_smi: str, **ts_guess_parameters):
+    def __init__(
+        self,
+        rxn_smi: str,
+        **ts_guess_parameters,
+    ):
         self._ts_guess_parameters = _DEFAULT_TS_GUESS_PARAMETERS.copy()
         self._ts_guess_parameters.update(ts_guess_parameters)
 
         # generate reactant and product complex RDkitMOl from smiles, atoms are always
         # zero-indexed, use mol.GetAtomMapNumbers() to get atom map specified in the
         # smiles
-        r_complex, p_complex = [RDKitMol.FromSmiles(smi) for smi in rxn_smi.split(">>")]
+        r_complex, p_complex = map(RDKitMol.FromSmiles, rxn_smi.split(">>"))
 
         # perceive reaction center
         # formed, broken bonds indices e.g., fbond = [(1, 3)] means a bond forms between
-        fbond, bbond = rdmc_ts.get_formed_and_broken_bonds(r_complex, p_complex)
         # atom with index 1 and 3, notice that atoms are zero-indexed and reaction is
         # analyzed in the forward direction
+        fbond, bbond = rdmc_ts.get_formed_and_broken_bonds(r_complex, p_complex)
+
         # the H atom index in the TS
-        the_h_atom = list(set(it.chain(*fbond)).intersection(it.chain(*bbond)))
+        the_h_atom = set(it.chain(*fbond)).intersection(it.chain(*bbond)).pop()
 
         # TS pivot atom indices, not yet sorted by given reactants order
-        _pivot_atoms = list(set(it.chain(*(fbond + bbond))).difference(the_h_atom))
+        _pivot_atoms = list(set(it.chain(*(fbond + bbond))).difference({the_h_atom}))
         pivot_atoms = [None] * len(_pivot_atoms)
 
         # get atom indices in each molecule fragments, re-arranged to match the
@@ -107,12 +111,13 @@ class BimolecularHydrogenAbstractionReaction:
         frags_r = [None] * len(_frags_r)
         frags_p = [None] * len(_frags_p)
 
-        _reactants, _products = qp_utils.split_rxn_smi(rxn_smi=rxn_smi)
+        _reactants, _products = utils.split_rxn_smi(rxn_smi=rxn_smi)
+
         _reactants_atom_map = [
-            qp_utils.get_ordered_integers(x, sorted=True) for x in _reactants
+            utils.get_ordered_integers(x, sorted=True) for x in _reactants
         ]
         _products_atom_map = [
-            qp_utils.get_ordered_integers(x, sorted=True) for x in _products
+            utils.get_ordered_integers(x, sorted=True) for x in _products
         ]
 
         r_complex_atom_map = r_complex.GetAtomMapNumbers()
@@ -151,46 +156,28 @@ class BimolecularHydrogenAbstractionReaction:
         # get indices for neighbouring atoms of pivot atoms
         # ordered by how "bulky" the molecular fragment that the atom is connected to
         _r1_neighbour_indices = list(
-            qp_utils.get_neighbour_atom(
+            utils.get_neighbour_atom(
                 r_complex,
                 center_atom_idx=pivot_atoms[0],
-                exlude_atom_idx_list=the_h_atom,
+                exlude_atom_idx_list=[the_h_atom],
             ).keys()
         )
         _r1_neighbour_indices_by_size = [
-            (
-                x,
-                len(
-                    qp_utils.find_fragment(
-                        r_complex,
-                        center_atom_idx=x,
-                        exlude_atom_idx_list=[pivot_atoms[0]],
-                    )
-                ),
-            )
+            (x, len(utils.find_fragment(r_complex, x, [pivot_atoms[0]])))
             for x in _r1_neighbour_indices
         ]
         _r1_neighbour_indices_by_size.sort(key=lambda x: x[1], reverse=True)
         r1_neighbour_indices = [x[0] for x in _r1_neighbour_indices_by_size]
 
         _r2_neighbour_indices = list(
-            qp_utils.get_neighbour_atom(
+            utils.get_neighbour_atom(
                 r_complex,
                 center_atom_idx=pivot_atoms[1],
-                exlude_atom_idx_list=the_h_atom,
+                exlude_atom_idx_list=[the_h_atom],
             ).keys()
         )
         _r2_neighbour_indices_by_size = [
-            (
-                x,
-                len(
-                    qp_utils.find_fragment(
-                        r_complex,
-                        center_atom_idx=x,
-                        exlude_atom_idx_list=[pivot_atoms[1]],
-                    )
-                ),
-            )
+            (x, len(utils.find_fragment(r_complex, x, [pivot_atoms[1]])))
             for x in _r2_neighbour_indices
         ]
         _r2_neighbour_indices_by_size.sort(key=lambda x: x[1], reverse=True)
@@ -208,6 +195,7 @@ class BimolecularHydrogenAbstractionReaction:
         self.p_fragment_indices = frags_p
         self.r1_neighbour_indices = r1_neighbour_indices
         self.r2_neighbour_indices = r2_neighbour_indices
+        self.relax_score = self.generate_ts_guess()
 
     @staticmethod
     def _return_opt_spc_bond_distance(
@@ -229,10 +217,10 @@ class BimolecularHydrogenAbstractionReaction:
 
         bd_list = []
 
-        while averaged:
+        for _ in range(averaged):
             r = RDKitMol.FromSmiles(spc_smi)
             ff = RDKitFF("mmff94s")
-            r.EmbedConformer(qp_utils.FF)
+            r.EmbedConformer(utils.FF)
             ff.setup(r)
             ff.optimize()
             m = ff.get_optimized_mol()
@@ -245,13 +233,11 @@ class BimolecularHydrogenAbstractionReaction:
 
             bd = r_conf.GetBondLength([h_idx, pivot_idx])
             bd_list.append(bd)
-            averaged -= 1
 
         return sum(bd_list) / len(bd_list)
 
-    def _initialize_ts_guess_geometry(self):
-        _reactants, _products = qp_utils.split_rxn_smi(rxn_smi=self.rxn_smi)
-        ts_conformer = self.ts_complex.GetConformer()
+    def _initialize_ts_guess_geometry(self, ts_conformer):
+        _reactants, _products = utils.split_rxn_smi(self.rxn_smi)
 
         # set TS bond distances
         # update bond distance of r1 -- H(ts)
@@ -260,7 +246,7 @@ class BimolecularHydrogenAbstractionReaction:
         r1_dist = self._return_opt_spc_bond_distance(
             spc_smi=_reactants[0],
             pivot_atom=self.ts_pivot_indices[0],
-            the_h_atom=self.ts_h_index[0],
+            the_h_atom=self.ts_h_index,
             atom_map_idx=self.r_fragment_indices[0],
         )
 
@@ -273,18 +259,14 @@ class BimolecularHydrogenAbstractionReaction:
 
         # step 3: set bond length for the TS complex
         ts_conformer.SetBondLength(
-            [
-                self.ts_pivot_indices[0],
-                self.ts_h_index[0],
-            ],
-            bond_length_X_H,
+            [self.ts_pivot_indices[0], self.ts_h_index], bond_length_X_H
         )
 
         # update bond distance of H(ts) -- r2
         r2_dist = self._return_opt_spc_bond_distance(
             spc_smi=_products[1],
             pivot_atom=self.ts_pivot_indices[1],
-            the_h_atom=self.ts_h_index[0],
+            the_h_atom=self.ts_h_index,
             atom_map_idx=self.p_fragment_indices[1],
         )
 
@@ -293,11 +275,7 @@ class BimolecularHydrogenAbstractionReaction:
         )
 
         ts_conformer.SetBondLength(
-            [
-                self.ts_pivot_indices[1],
-                self.ts_h_index[0],
-            ],
-            bond_length_H_Y,
+            [self.ts_pivot_indices[1], self.ts_h_index], bond_length_H_Y
         )
 
         # set TS angle
@@ -306,7 +284,7 @@ class BimolecularHydrogenAbstractionReaction:
         ts_conformer.SetAngleDeg(
             [
                 self.ts_pivot_indices[0],
-                self.ts_h_index[0],
+                self.ts_h_index,
                 self.ts_pivot_indices[1],
             ],
             self._ts_guess_parameters["angle_X_H_Y"],
@@ -324,7 +302,7 @@ class BimolecularHydrogenAbstractionReaction:
             [
                 self.r1_neighbour_indices[0],
                 self.ts_pivot_indices[0],
-                self.ts_h_index[0],
+                self.ts_h_index,
                 self.ts_pivot_indices[1],
             ],
             self._ts_guess_parameters["dihedral_r1"],
@@ -333,14 +311,14 @@ class BimolecularHydrogenAbstractionReaction:
         ts_conformer.SetTorsionDeg(
             [
                 self.ts_pivot_indices[0],
-                self.ts_h_index[0],
+                self.ts_h_index,
                 self.ts_pivot_indices[1],
                 self.r2_neighbour_indices[0],
             ],
             self._ts_guess_parameters["dihedral_r2"],
         )
 
-    def _optimize_ts_using_force_field(self):
+    def _optimize_ts_using_force_field(self, ts_conformer):
         """
         A helper function to optimize the transition state using force field.
 
@@ -354,19 +332,16 @@ class BimolecularHydrogenAbstractionReaction:
         species_complex_dict : dict
             A dictionary containing information about the species complex.
         """
-        ts_complex = self.ts_complex
-        ts_conformer = ts_complex.GetConformer()
-
         bond_length_X_H = ts_conformer.GetBondLength(self.broken_bond[0])
         bond_length_H_Y = ts_conformer.GetBondLength(self.formed_bond[0])
 
         ff = RDKitFF("mmff94s")
         fake_ts = RDKitMol.FromSmiles(self.rxn_smi.split(">>")[0])
         fake_ts.EmbedConformer()
-        fake_ts.SetPositions(ts_complex.GetPositions())
+        fake_ts.SetPositions(ts_conformer.GetPositions())
         ff.setup(fake_ts)
 
-        the_h_atom = self.ts_h_index[0]
+        the_h_atom = self.ts_h_index
         pivot_atom_r1 = self.ts_pivot_indices[0]
         pivot_atom_r2 = self.ts_pivot_indices[1]
 
@@ -379,17 +354,7 @@ class BimolecularHydrogenAbstractionReaction:
 
         ff.optimize()
         m = ff.get_optimized_mol()
-
-        ts_new = copy.deepcopy(ts_complex)
-        ts_new.SetPositions(m.GetPositions())
-
-        return ts_new
-
-    # this function check if the TS guess has atoms colliding with each other
-    # 0.4 anstrom is an empirical parameter
-    def check_hard_collision(ts, threshold=0.4):
-        if ts.HasCollidingAtoms(threshold=threshold):
-            raise ValueError("Atom collision detected.")
+        ts_conformer.SetPositions(m.GetPositions())
 
     @staticmethod
     def _check_fragment_collision(ts, h_idx, threshold=1.3):
@@ -439,24 +404,25 @@ class BimolecularHydrogenAbstractionReaction:
             bond_length_H_Y (_type_, optional): _description_. Defaults to None.
         """
 
+        ts_conformer = self.ts_complex.GetConformer()
         # initialize ts guess geometry
-        self._initialize_ts_guess_geometry()
+        self._initialize_ts_guess_geometry(ts_conformer)
 
         # optimize ts guess
-        ts_new = self._optimize_ts_using_force_field()
+        self._optimize_ts_using_force_field(ts_conformer)
 
-        if ts_new.HasCollidingAtoms(threshold=0.4):
+        if self.ts_complex.HasCollidingAtoms(threshold=0.4):
             raise ValueError("Atom collision detected.")
 
-        bond_length_X_H = ts_new.GetConformer().GetBondLength(self.broken_bond[0])
-        bond_length_H_Y = ts_new.GetConformer().GetBondLength(self.formed_bond[0])
+        bond_length_X_H = ts_conformer.GetBondLength(self.broken_bond[0])
+        bond_length_H_Y = ts_conformer.GetBondLength(self.formed_bond[0])
 
         threshold = min([bond_length_X_H, bond_length_H_Y]) * 0.98
         relax_score = self._check_fragment_collision(
-            ts_new, self.ts_h_index[0], threshold=threshold
+            self.ts_complex, self.ts_h_index, threshold=threshold
         )
 
-        return relax_score, ts_new
+        return relax_score
 
     def gen_n_ts_confs(
         self,
@@ -480,15 +446,16 @@ class BimolecularHydrogenAbstractionReaction:
 
         iter_counter = 0
         while result_count < num_confs and iter_counter < max_total_iter:
-            relax_score, ts_new = self.generate_ts_guess()
+            try:
+                relax_score = self.generate_ts_guess()
+                ts_new = copy.deepcopy(self.ts_complex)
 
-            if all([relax_score, ts_new]):
-                xyz = ts_new.ToXYZ()
-                g_xyz = "\n".join(xyz.splitlines()[2:]) + "\n\n"
-                result.append((relax_score, g_xyz))
-            # except:
-            #     pass
-            # finally:
+                if all([relax_score, ts_new]):
+                    xyz = ts_new.ToXYZ()
+                    g_xyz = "\n".join(xyz.splitlines()[2:]) + "\n\n"
+                    result.append((relax_score, g_xyz))
+            except:
+                pass
             iter_counter += 1
             result_count = len(result)
 
