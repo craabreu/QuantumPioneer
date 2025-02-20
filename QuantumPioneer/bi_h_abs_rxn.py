@@ -6,6 +6,11 @@ from rdmc import RDKitMol
 from rdmc import ts as rdmc_ts
 from rdmc.forcefield import RDKitFF
 
+from rdkit.Chem import Draw
+from rdkit.Chem import rdChemReactions
+from rdmc.view import ts_viewer
+
+
 from QuantumPioneer import utils
 
 FF = AllChem.ETKDGv3()
@@ -184,6 +189,9 @@ class BimolecularHydrogenAbstractionReaction:
         self.ts_complexes = {}
         self.ts_relax_scores = {}
         self._generate_conformers(num_ts_conformers, max_attemps_per_conformer)
+
+    def __repr__(self) -> str:
+        return self.rxn_smi
 
     def _generate_conformers(self, num_ts_conformers, max_attemps_per_conformer):
         for index in range(num_ts_conformers):
@@ -453,3 +461,14 @@ class BimolecularHydrogenAbstractionReaction:
             "r2_neighbour_indices": self.r2_neighbour_indices,
             "ts_conformers_coord": tuple(conformers),
         }
+
+    def to_image(self):
+        return Draw.ReactionToImage(
+            rdChemReactions.ReactionFromSmarts(self.rxn_smi, useSmiles=True),
+            # useSVG=True,
+        )
+
+    def show_conformer(self, index=0):
+        return ts_viewer(
+            self.r_complex, self.p_complex, self.ts_complexes[index], only_ts=True
+        )
