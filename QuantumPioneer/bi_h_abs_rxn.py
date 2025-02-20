@@ -13,28 +13,29 @@ FF = AllChem.ETKDGv3()
 # this make sure we get different embedding each time
 FF.randomSeed = np.random.randint(1, 10000000)
 
-
 # Empirical parameters
+# "angle_X_H_Y": initial angle for TS pivot. Do not make it too close to 180.
+# "dihedral_r1": initial dihedral angle for TS, defined using r1, does not really
+#     matter most of the time for bi-molecular H abstraction.
+# "dihedral_r2": the other diehdral angle, defined using reactant 2 or r2
+# "bond_length_scale_factor_r1": how much to scale the TS bond length based on reactant
+#     bond length for r1; can be modified to scale each bond differently, but usually
+#     1.2-1.25 is good guess for bi-molecular H abstraction with C-H and 1.15 - 1.2
+#     for O-H.
+# "bond_length_scale_factor_r2": how much to scale the TS bond length based on reactant
+#     bond length for r1; can be modified to scale each bond differently, but usually
+#     1.2-1.25 is good guess for bi-molecular H abstraction with C-H and 1.15 - 1.2
+#     for O-H.
+# "bond_length_X_H": directly specifiy the TS bond length for r1, useful if another
+#     bond length estimator e.g., TS-EGNN/Chemprop/Kinbot can provide this information
+# "bond_length_H_Y": directly specifiy the TS bond length for r2
 _DEFAULT_TS_GUESS_PARAMETERS = {
-    # initial angle for TS pivot. Do not make it too close to 180.
     "angle_X_H_Y": 160,
-    # initial dihedral angle for TS, defined using r1, does not really matter most of
-    # the time for bi-molecular H abstraction.
     "dihedral_r1": 0,
-    # the other diehdral angle, defined using reactant 2 or r2
     "dihedral_r2": 0,
-    # how much to scale the TS bond length based on reactant bond length for r1; can be
-    # modified to scale each bond differently, but usually 1.2-1.25 is good guess for
-    # bi-molecular H abstraction with C-H and 1.15 - 1.2 for O-H.
     "bond_length_scale_factor_r1": 1.22,
-    # how much to scale the TS bond length based on reactant bond length for r1; can be
-    # modified to scale each bond differently, but usually 1.2-1.25 is good guess for
-    # bi-molecular H abstraction with C-H and 1.15 - 1.2 for O-H.
     "bond_length_scale_factor_r2": 1.19,
-    # directly specifiy the TS bond length for r1, useful if another bond length
-    # estimator e.g., TS-EGNN/Chemprop/Kinbot can provide this information
     "bond_length_X_H": None,
-    # directly specifiy the TS bond length for r2
     "bond_length_H_Y": None,
 }
 
@@ -187,7 +188,7 @@ class BimolecularHydrogenAbstractionReaction:
         self.p_fragment_indices = frags_p
         self.r1_neighbour_indices = r1_neighbour_indices
         self.r2_neighbour_indices = r2_neighbour_indices
-        self.relax_score = self.generate_ts_guess()
+        self.relax_score = self._generate_ts_guess()
 
     @staticmethod
     def _return_opt_spc_bond_distance(
@@ -212,7 +213,7 @@ class BimolecularHydrogenAbstractionReaction:
         for _ in range(averaged):
             r = RDKitMol.FromSmiles(spc_smi)
             ff = RDKitFF("mmff94s")
-            r.EmbedConformer(utils.FF)
+            r.EmbedConformer(FF)
             ff.setup(r)
             ff.optimize()
             m = ff.get_optimized_mol()
@@ -379,7 +380,7 @@ class BimolecularHydrogenAbstractionReaction:
             # seperated the two fragments of the TS are (ideal for initial guess)
             return relax_score
 
-    def generate_ts_guess(self):
+    def _generate_ts_guess(self):
         """
         generate_ts_guess _summary_
 
@@ -439,15 +440,15 @@ class BimolecularHydrogenAbstractionReaction:
         iter_counter = 0
         while result_count < num_confs and iter_counter < max_total_iter:
             try:
-                relax_score = self.generate_ts_guess()
+                relax_score = self._generate_ts_guess()
                 ts_new = copy.deepcopy(self.ts_complex)
 
                 if all([relax_score, ts_new]):
                     xyz = ts_new.ToXYZ()
                     g_xyz = "\n".join(xyz.splitlines()[2:]) + "\n\n"
                     result.append((relax_score, g_xyz))
-            except:
-                pass
+            except Exception as e:
+                raise Warning(f"Failed to generate TS conformer: {e}")
             iter_counter += 1
             result_count = len(result)
 
