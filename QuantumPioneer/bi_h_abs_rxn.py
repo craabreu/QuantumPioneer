@@ -48,6 +48,8 @@ class BimolecularHydrogenAbstractionReaction:
     ----------
     rxn_smi : str
         Atom-mapped reaction smiles.
+    num_ts_conformers : int, optional
+        Number of transition state conformers, by default 1
 
     Keyword Arguments
     ----------------
@@ -81,6 +83,8 @@ class BimolecularHydrogenAbstractionReaction:
     def __init__(
         self,
         rxn_smi: str,
+        num_ts_conformers: int = 1,
+        max_attemps_per_conformer: int = 5,
         **ts_guess_parameters,
     ):
         self._ts_guess_parameters = _DEFAULT_TS_GUESS_PARAMETERS.copy()
@@ -144,16 +148,6 @@ class BimolecularHydrogenAbstractionReaction:
             idx = [x in f for f in frags_r].index(True)
             pivot_atoms[idx] = x
 
-        # embed 3D geometry for reactants and products
-        # here we use ETKDGv3() defined on top of the notebook, but can be changed to
-        r_complex.EmbedConformer(FF)
-        # others if needed
-        p_complex.EmbedConformer(FF)
-        # we need to add redundant bond to the reactant complex graph to represent the
-        # TS
-        ts_complex = r_complex.AddRedundantBonds(fbond)
-        # geometry ts_complex.GetConformer() # embed TS conformer
-
         # get indices for neighbouring atoms of pivot atoms
         # ordered by how "bulky" the molecular fragment that the atom is connected to
         _r1_neighbour_indices = list(
@@ -179,7 +173,6 @@ class BimolecularHydrogenAbstractionReaction:
         self.rxn_smi = rxn_smi
         self.r_complex = r_complex
         self.p_complex = p_complex
-        self.ts_complex = ts_complex
         self.formed_bond = fbond  # R2OO
         self.broken_bond = bbond  # R1H
         self.ts_h_index = the_h_atom
@@ -188,7 +181,26 @@ class BimolecularHydrogenAbstractionReaction:
         self.p_fragment_indices = frags_p
         self.r1_neighbour_indices = r1_neighbour_indices
         self.r2_neighbour_indices = r2_neighbour_indices
-        self.relax_score = self._generate_ts_guess()
+
+        self.ts_complexes = {}
+        self.ts_relax_scores = {}
+        for index in range(num_ts_conformers):
+            for _ in range(max_attemps_per_conformer):
+                try:
+                    # Embed 3D geometry for reactants and products. Here we use
+                    # ETKDGv3() defined on top of the notebook, but can be changed to
+                    # others if needed
+                    r_complex.EmbedConformer(FF)
+                    p_complex.EmbedConformer(FF)
+                    # We need to add redundant bond to the reactant complex graph to
+                    # represent the TS geometry
+                    ts_complex = r_complex.AddRedundantBonds(fbond)
+                    relax_score = self._generate_ts_guess(ts_complex)
+                    break
+                except Exception as e:
+                    raise ValueError("Failed to generate TS conformer.") from e
+            self.ts_complexes[index] = ts_complex
+            self.ts_relax_scores[index] = relax_score
 
     @staticmethod
     def _return_opt_spc_bond_distance(
@@ -380,7 +392,7 @@ class BimolecularHydrogenAbstractionReaction:
             # seperated the two fragments of the TS are (ideal for initial guess)
             return relax_score
 
-    def _generate_ts_guess(self):
+    def _generate_ts_guess(self, ts_complex):
         """
         generate_ts_guess _summary_
 
@@ -397,14 +409,14 @@ class BimolecularHydrogenAbstractionReaction:
             bond_length_H_Y (_type_, optional): _description_. Defaults to None.
         """
 
-        ts_conformer = self.ts_complex.GetConformer()
+        ts_conformer = ts_complex.GetConformer()
         # initialize ts guess geometry
         self._initialize_ts_guess_geometry(ts_conformer)
 
         # optimize ts guess
         self._optimize_ts_using_force_field(ts_conformer)
 
-        if self.ts_complex.HasCollidingAtoms(threshold=0.4):
+        if ts_complex.HasCollidingAtoms(threshold=0.4):
             raise ValueError("Atom collision detected.")
 
         bond_length_X_H = ts_conformer.GetBondLength(self.broken_bond[0])
@@ -412,7 +424,7 @@ class BimolecularHydrogenAbstractionReaction:
 
         threshold = min([bond_length_X_H, bond_length_H_Y]) * 0.98
         relax_score = self._check_fragment_collision(
-            self.ts_complex, self.ts_h_index, threshold=threshold
+            ts_complex, self.ts_h_index, threshold=threshold
         )
 
         return relax_score
