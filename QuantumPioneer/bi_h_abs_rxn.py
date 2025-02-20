@@ -156,11 +156,7 @@ class BimolecularHydrogenAbstractionReaction:
         # get indices for neighbouring atoms of pivot atoms
         # ordered by how "bulky" the molecular fragment that the atom is connected to
         _r1_neighbour_indices = list(
-            utils.get_neighbour_atom(
-                r_complex,
-                center_atom_idx=pivot_atoms[0],
-                exlude_atom_idx_list=[the_h_atom],
-            ).keys()
+            utils.get_neighbour_atom(r_complex, pivot_atoms[0], [the_h_atom]).keys()
         )
         _r1_neighbour_indices_by_size = [
             (x, len(utils.find_fragment(r_complex, x, [pivot_atoms[0]])))
@@ -170,11 +166,7 @@ class BimolecularHydrogenAbstractionReaction:
         r1_neighbour_indices = [x[0] for x in _r1_neighbour_indices_by_size]
 
         _r2_neighbour_indices = list(
-            utils.get_neighbour_atom(
-                r_complex,
-                center_atom_idx=pivot_atoms[1],
-                exlude_atom_idx_list=[the_h_atom],
-            ).keys()
+            utils.get_neighbour_atom(r_complex, pivot_atoms[1], [the_h_atom]).keys()
         )
         _r2_neighbour_indices_by_size = [
             (x, len(utils.find_fragment(r_complex, x, [pivot_atoms[1]])))

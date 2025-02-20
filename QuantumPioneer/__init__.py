@@ -2,4 +2,4 @@
 
 # Add imports here
 from ._version import __version__  # noqa: F401
-from .bi_habs_rxn import BimolecularHydrogenAbstractionReaction  # noqa: F401
+from .bi_h_abs_rxn import BimolecularHydrogenAbstractionReaction  # noqa: F401
