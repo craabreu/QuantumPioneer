@@ -4,7 +4,6 @@ import typing as t
 from rdkit import Chem
 from rdmc import RDKitMol
 
-
 NONE_GROUP = "[Xe]"
 
 

@@ -1,4 +1,3 @@
-import copy
 import itertools as it
 
 import numpy as np
@@ -184,17 +183,20 @@ class BimolecularHydrogenAbstractionReaction:
 
         self.ts_complexes = {}
         self.ts_relax_scores = {}
+        self._generate_conformers(num_ts_conformers, max_attemps_per_conformer)
+
+    def _generate_conformers(self, num_ts_conformers, max_attemps_per_conformer):
         for index in range(num_ts_conformers):
             for _ in range(max_attemps_per_conformer):
                 try:
                     # Embed 3D geometry for reactants and products. Here we use
                     # ETKDGv3() defined on top of the notebook, but can be changed to
                     # others if needed
-                    r_complex.EmbedConformer(FF)
-                    p_complex.EmbedConformer(FF)
+                    self.r_complex.EmbedConformer(FF)
+                    self.p_complex.EmbedConformer(FF)
                     # We need to add redundant bond to the reactant complex graph to
                     # represent the TS geometry
-                    ts_complex = r_complex.AddRedundantBonds(fbond)
+                    ts_complex = self.r_complex.AddRedundantBonds(self.formed_bond)
                     relax_score = self._generate_ts_guess(ts_complex)
                     break
                 except Exception as e:
@@ -429,55 +431,25 @@ class BimolecularHydrogenAbstractionReaction:
 
         return relax_score
 
-    def gen_n_ts_confs(
-        self,
-        num_confs=10,
-        max_total_iter=50,
-    ):
-        """
-        A helper function to attempt to generate N valid TS guesses, each with a score
-        up to some max iteration.
-        This is an expensive step that can be optimized.
-
-        Parameters
-        ----------
-        num_confs : int, optional
-            Number of conformations to generate. Defaults to 10.
-        max_total_iter : int, optional
-            Maximum total iterations to attempt. Defaults to 50.
-        """
-        result = []
-        result_count = len(result)
-
-        iter_counter = 0
-        while result_count < num_confs and iter_counter < max_total_iter:
-            try:
-                relax_score = self._generate_ts_guess()
-                ts_new = copy.deepcopy(self.ts_complex)
-
-                if all([relax_score, ts_new]):
-                    xyz = ts_new.ToXYZ()
-                    g_xyz = "\n".join(xyz.splitlines()[2:]) + "\n\n"
-                    result.append((relax_score, g_xyz))
-            except Exception as e:
-                raise Warning(f"Failed to generate TS conformer: {e}")
-            iter_counter += 1
-            result_count = len(result)
-
-        if not result:
-            raise ValueError("Failed to generate TS conformers.")
-        else:
-            result.sort(key=lambda y: y[0])
-
-        output = copy.deepcopy(self.__dict__)
-        del output["r_complex"]
-        del output["p_complex"]
-        del output["ts_complex"]
-        del output["_ts_guess_parameters"]
-
-        result_g_xyz = [x[-1] for x in result]
-        score_dist = [x[0] for x in result]
-        ts_conformers_coord = tuple([(k, v) for k, v in zip(score_dist, result_g_xyz)])
-        output["ts_conformers_coord"] = ts_conformers_coord
-
-        return output
+    def to_dict(self):
+        conformers = []
+        for index, ts_complex in self.ts_complexes.items():
+            conformers.append(
+                (
+                    self.ts_relax_scores[index],
+                    "\n".join(ts_complex.ToXYZ().splitlines()[2:]) + "\n\n",
+                )
+            )
+        conformers.sort(key=lambda y: y[0])
+        return {
+            "rxn_smi": self.rxn_smi,
+            "formed_bond": self.formed_bond,
+            "broken_bond": self.broken_bond,
+            "ts_h_index": self.ts_h_index,
+            "ts_pivot_indices": self.ts_pivot_indices,
+            "r_fragment_indices": self.r_fragment_indices,
+            "p_fragment_indices": self.p_fragment_indices,
+            "r1_neighbour_indices": self.r1_neighbour_indices,
+            "r2_neighbour_indices": self.r2_neighbour_indices,
+            "ts_conformers_coord": tuple(conformers),
+        }
