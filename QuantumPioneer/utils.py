@@ -4,7 +4,11 @@ import typing as t
 from rdkit import Chem
 from rdmc import RDKitMol
 
-NONE_GROUP = "[Xe]"
+ROO_GROUP = "[H,C,N,O]-[O;X2]-[O;X1+0]"  # match ROO radical, with R = H, C, O, N only
+ROOH_GROUP = "[*]-[O;X2]-[OH]"  # match any ROOH group
+RADICAL_GROUP = "[CX3+0,NX2+0,OX1+0]"  # match radical, with R = C, O, N only
+NONE_GROUP = "[Xe]"  # using Xe as a None group that will match nothing;
+                     # use when you do not care what the species is
 
 
 def adjust_atom_map_smi_indexing(
