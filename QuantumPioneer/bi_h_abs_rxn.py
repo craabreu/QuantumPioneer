@@ -1,15 +1,11 @@
 import itertools as it
 
 import numpy as np
-from rdkit.Chem import AllChem
+from rdkit.Chem import AllChem, Draw, rdChemReactions
 from rdmc import RDKitMol
 from rdmc import ts as rdmc_ts
 from rdmc.forcefield import RDKitFF
-
-from rdkit.Chem import Draw
-from rdkit.Chem import rdChemReactions
 from rdmc.view import ts_viewer
-
 
 from QuantumPioneer import utils
 
@@ -42,6 +38,10 @@ _DEFAULT_TS_GUESS_PARAMETERS = {
     "bond_length_X_H": None,
     "bond_length_H_Y": None,
 }
+
+ROO_GROUP = "[#1,C,N,O]-[O;X2]-[O;X1+0]"  # match ROO radical, with R = H, C, O, N only
+ROOH_GROUP = "[*]-[O;X2]-[OH]"  # match any ROOH group
+RADICAL_GROUP = "[CX3+0,NX2+0,OX1+0]"  # match radical, with R = C, O, N only
 
 
 class BimolecularHydrogenAbstractionReaction:
@@ -93,6 +93,8 @@ class BimolecularHydrogenAbstractionReaction:
     ):
         self._ts_guess_parameters = _DEFAULT_TS_GUESS_PARAMETERS.copy()
         self._ts_guess_parameters.update(ts_guess_parameters)
+
+        rxn_smi = self._reorder_reaction_smile(rxn_smi)
 
         # generate reactant and product complex RDkitMOl from smiles, atoms are always
         # zero-indexed, use mol.GetAtomMapNumbers() to get atom map specified in the
@@ -192,6 +194,11 @@ class BimolecularHydrogenAbstractionReaction:
 
     def __repr__(self) -> str:
         return self.rxn_smi
+
+    def _reorder_reaction_smile(self, rxn_smi: str) -> str:
+        return utils.reorder_reaction_smile(
+            rxn_smi, [utils.NONE_GROUP, ROO_GROUP], [RADICAL_GROUP, ROOH_GROUP]
+        )
 
     def _generate_conformers(self, num_ts_conformers, max_attemps_per_conformer):
         for index in range(num_ts_conformers):
