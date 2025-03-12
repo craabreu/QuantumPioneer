@@ -5,7 +5,9 @@ from rdkit.Chem import AllChem, Draw, rdChemReactions
 from rdmc import RDKitMol
 from rdmc import ts as rdmc_ts
 from rdmc.forcefield import RDKitFF
+import py3Dmol
 from rdmc.view import ts_viewer
+import IPython
 
 from QuantumPioneer import utils
 
@@ -53,12 +55,30 @@ class BimolecularHydrogenAbstractionReaction:
     rxn_smi : str
         Atom-mapped reaction smiles.
     num_ts_conformers : int, optional
-        Number of transition state conformers, by default 1
+        Number of transition state conformers to generate. Default is 1.
+    max_attemps_per_conformer : int, optional
+        Maximum number of attempts per conformer. Default is 5.
 
     Keyword Arguments
     ----------------
     **ts_guess_parameters : dict
-        Keyword arguments for transition state guess parameters.
+        Keyword arguments for transition state guess parameters. The available
+        parameters are:
+
+        - `angle_X_H_Y` (default: 160): initial angle for the transition state pivot. Do
+        not make it too close to 180.
+        - `dihedral_r1` (default: 0): initial dihedral angle for the transition state,
+        defined using reactant 1.
+        - `dihedral_r2` (default: 0): the other diehdral angle for the transition state,
+        defined using reactant 2.
+        - `bond_length_scale_factor_r1` (default: 1.22): how much to scale the
+        transition state bond length based on reactant bond length for reactant 1.
+        - `bond_length_scale_factor_r2` (default: 1.19): how much to scale the
+        transition state bond length based on reactant bond length for reactant 2.
+        - `bond_length_X_H` (default: None): directly specify the transition state bond
+        length for reactant 1.
+        - `bond_length_H_Y` (default: None): directly specifiy the transition state bond
+        length for reactant 2.
 
     Attributes
     ----------
@@ -469,13 +489,26 @@ class BimolecularHydrogenAbstractionReaction:
             "ts_conformers_coord": tuple(conformers),
         }
 
-    def to_image(self):
+    def _repr_html_(self):
         return Draw.ReactionToImage(
             rdChemReactions.ReactionFromSmarts(self.rxn_smi, useSmiles=True),
-            # useSVG=True,
+            useSVG=True,
         )
 
-    def show_conformer(self, index=0):
+    def display_conformer(self, index: int = 0) -> py3Dmol.view:
+        """
+        Draw the conformer as an interactive 3D image.
+
+        Parameters
+        ----------
+        index : int, optional
+            Index of the conformer, by default 0.
+
+        Returns
+        -------
+        py3Dmol.view
+            The interactive 3D image.
+        """
         return ts_viewer(
             self.r_complex, self.p_complex, self.ts_complexes[index], only_ts=True
         )
