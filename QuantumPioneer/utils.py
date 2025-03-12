@@ -1,8 +1,8 @@
 import re
 import typing as t
 
+import rdmc
 from rdkit import Chem
-from rdmc import RDKitMol
 
 NONE_GROUP = "[Xe]"  # using Xe as a None group that will match nothing;
 # use when you do not care what the species is
@@ -201,16 +201,16 @@ def reorder_reaction_smile(
 
 
 def isomorphic_check(
-    mol1: RDKitMol,
-    mol2: RDKitMol,
+    mol1: rdmc.RDKitMol,
+    mol2: rdmc.RDKitMol,
 ) -> bool:
     """
     Compare if two rdkit molecules are the same.
 
     Parameters
     ----------
-    mol1 : RDKitMol
-    mol2 : RDKitMol
+    mol1 : rdmc.RDKitMol
+    mol2 : rdmc.RDKitMol
 
     Returns
     -------
@@ -256,7 +256,7 @@ def get_neighbour_atom(mol, center_atom_idx, exlude_atom_idx_list=None):
 
     Parameters
     ----------
-    mol : RDKitMol
+    mol : rdmc.RDKitMol
         The molecule.
     center_atom_idx : int
         Index of the center atom.
@@ -287,7 +287,7 @@ def find_fragment(mol, center_atom_idx, exlude_atom_idx_list):
 
     Parameters
     ----------
-    mol : RDKitMol
+    mol : rdmc.RDKitMol
         The molecule.
     center_atom_idx : int
         Index of the center atom.

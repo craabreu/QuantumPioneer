@@ -1,13 +1,9 @@
 import itertools as it
 
 import numpy as np
-from rdkit.Chem import AllChem, Draw, rdChemReactions
-from rdmc import RDKitMol
-from rdmc import ts as rdmc_ts
-from rdmc.forcefield import RDKitFF
 import py3Dmol
-from rdmc.view import ts_viewer
-import IPython
+import rdmc
+from rdkit.Chem import AllChem, Draw, rdChemReactions
 
 from QuantumPioneer import utils
 
@@ -82,11 +78,11 @@ class BimolecularHydrogenAbstractionReaction:
 
     Attributes
     ----------
-    r_complex : RDKitMol
+    r_complex : rdmc.RDKitMol
         RDKitMol for reactant complex.
-    p_complex : RDKitMol
+    p_complex : rdmc.RDKitMol
         RDKitMol for product complex.
-    ts_complex : RDKitMol
+    ts_complex : rdmc.RDKitMol
         RDKitMol for transition state complex.
     pivot_atoms : list
         Pivot atoms indices for the transition state.
@@ -119,13 +115,13 @@ class BimolecularHydrogenAbstractionReaction:
         # generate reactant and product complex RDkitMOl from smiles, atoms are always
         # zero-indexed, use mol.GetAtomMapNumbers() to get atom map specified in the
         # smiles
-        r_complex, p_complex = map(RDKitMol.FromSmiles, rxn_smi.split(">>"))
+        r_complex, p_complex = map(rdmc.RDKitMol.FromSmiles, rxn_smi.split(">>"))
 
         # perceive reaction center
         # formed, broken bonds indices e.g., fbond = [(1, 3)] means a bond forms between
         # atom with index 1 and 3, notice that atoms are zero-indexed and reaction is
         # analyzed in the forward direction
-        fbond, bbond = rdmc_ts.get_formed_and_broken_bonds(r_complex, p_complex)
+        fbond, bbond = rdmc.ts.get_formed_and_broken_bonds(r_complex, p_complex)
 
         # the H atom index in the TS
         the_h_atom = set(it.chain(*fbond)).intersection(it.chain(*bbond)).pop()
@@ -260,8 +256,8 @@ class BimolecularHydrogenAbstractionReaction:
         bd_list = []
 
         for _ in range(averaged):
-            r = RDKitMol.FromSmiles(spc_smi)
-            ff = RDKitFF("mmff94s")
+            r = rdmc.RDKitMol.FromSmiles(spc_smi)
+            ff = rdmc.forcefield.RDKitFF("mmff94s")
             r.EmbedConformer(FF)
             ff.setup(r)
             ff.optimize()
@@ -377,8 +373,8 @@ class BimolecularHydrogenAbstractionReaction:
         bond_length_X_H = ts_conformer.GetBondLength(self.broken_bond[0])
         bond_length_H_Y = ts_conformer.GetBondLength(self.formed_bond[0])
 
-        ff = RDKitFF("mmff94s")
-        fake_ts = RDKitMol.FromSmiles(self.rxn_smi.split(">>")[0])
+        ff = rdmc.forcefield.RDKitFF("mmff94s")
+        fake_ts = rdmc.RDKitMol.FromSmiles(self.rxn_smi.split(">>")[0])
         fake_ts.EmbedConformer()
         fake_ts.SetPositions(ts_conformer.GetPositions())
         ff.setup(fake_ts)
@@ -509,6 +505,6 @@ class BimolecularHydrogenAbstractionReaction:
         py3Dmol.view
             The interactive 3D image.
         """
-        return ts_viewer(
+        return rdmc.view.ts_viewer(
             self.r_complex, self.p_complex, self.ts_complexes[index], only_ts=True
         )
