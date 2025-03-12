@@ -102,9 +102,26 @@ def test_reorder_reaction_smile():
         "[H:1][C:6]([H:2])([H:3])[S:10][C:7]([H:4])([H:5])[O:9][O:8][H:11]"
     )
 
-    r_pattern = [utils.NONE_GROUP, utils.ROO_GROUP]
-    p_pattern = [utils.RADICAL_GROUP, utils.ROOH_GROUP]
+    r_pattern = [utils.NONE_GROUP, "[#1,C,N,O]-[O;X2]-[O;X1+0]"]
+    p_pattern = ["[CX3+0,NX2+0,OX1+0]", "[*]-[O;X2]-[OH]"]
 
+    assert (
+        utils.reorder_reaction_smile(
+            rxn_smi=input_rxn_smi, r_pattern=r_pattern, p_pattern=p_pattern
+        )
+        == expected_rxn_smi
+    )
+
+    input_rxn_smi = (
+        "[H:1][O:3][O:2].[H:4][N:8]([H:5])[C:6]#[N:7]"
+        ">>"
+        "[H:5][N:8][C:6]#[N:7].[H:1][O:3][O:2][H:4]"
+    )
+    expected_rxn_smi = (
+        "[H:4][N:8]([H:5])[C:6]#[N:7].[H:1][O:3][O:2]"
+        ">>"
+        "[H:5][N:8][C:6]#[N:7].[H:1][O:3][O:2][H:4]"
+    )
     assert (
         utils.reorder_reaction_smile(
             rxn_smi=input_rxn_smi, r_pattern=r_pattern, p_pattern=p_pattern
