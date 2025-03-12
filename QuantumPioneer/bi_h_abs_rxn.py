@@ -3,6 +3,7 @@ import itertools as it
 import numpy as np
 import py3Dmol
 import rdmc
+from rdmc import view as rdmc_view
 from rdkit.Chem import AllChem, Draw, rdChemReactions
 
 from QuantumPioneer import utils
@@ -210,6 +211,12 @@ class BimolecularHydrogenAbstractionReaction:
 
     def __repr__(self) -> str:
         return self.rxn_smi
+
+    def _repr_html_(self):
+        return Draw.ReactionToImage(
+            rdChemReactions.ReactionFromSmarts(self.rxn_smi, useSmiles=True),
+            useSVG=True,
+        )
 
     def _reorder_reaction_smile(self, rxn_smi: str) -> str:
         return utils.reorder_reaction_smile(
@@ -462,7 +469,13 @@ class BimolecularHydrogenAbstractionReaction:
 
         return relax_score
 
-    def to_dict(self):
+    def to_dict(self) -> dict:
+        """
+        Convert the object to a dictionary.
+
+        Returns:
+            dict: A dictionary representation of the object.
+        """
         conformers = []
         for index, ts_complex in self.ts_complexes.items():
             conformers.append(
@@ -485,12 +498,6 @@ class BimolecularHydrogenAbstractionReaction:
             "ts_conformers_coord": tuple(conformers),
         }
 
-    def _repr_html_(self):
-        return Draw.ReactionToImage(
-            rdChemReactions.ReactionFromSmarts(self.rxn_smi, useSmiles=True),
-            useSVG=True,
-        )
-
     def display_conformer(self, index: int = 0) -> py3Dmol.view:
         """
         Draw the conformer as an interactive 3D image.
@@ -505,6 +512,6 @@ class BimolecularHydrogenAbstractionReaction:
         py3Dmol.view
             The interactive 3D image.
         """
-        return rdmc.view.ts_viewer(
+        return rdmc_view.ts_viewer(
             self.r_complex, self.p_complex, self.ts_complexes[index], only_ts=True
         )
