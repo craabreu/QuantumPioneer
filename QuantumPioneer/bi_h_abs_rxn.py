@@ -1,10 +1,12 @@
 import itertools as it
+import pathlib
+import textwrap
 
 import numpy as np
 import py3Dmol
 import rdmc
-from rdmc import view as rdmc_view
 from rdkit.Chem import AllChem, Draw, rdChemReactions
+from rdmc import view as rdmc_view
 
 from QuantumPioneer import utils
 
@@ -41,6 +43,46 @@ _DEFAULT_TS_GUESS_PARAMETERS = {
 ROO_GROUP = "[#1,C,N,O]-[O;X2]-[O;X1+0]"  # match ROO radical, with R = H, C, O, N only
 ROOH_GROUP = "[*]-[O;X2]-[OH]"  # match any ROOH group
 RADICAL_GROUP = "[CX3+0,NX2+0,OX1+0]"  # match radical, with R = C, O, N only
+
+CONFIGS = {
+    "AM1": [
+        "opt=(ModRedundant,calcall,maxcycle=128,noeig,nomicro)",
+        "scf=(xqc)",
+        "iop(7/33=1)",
+        "iop(2/9=2000)",
+        "iop(7/127=-99)",
+        "iop(8/117=-99)",
+    ],
+    "PM7": [
+        "opt=(ModRedundant,ts,calcall,maxcycle=128,noeig,nomicro)",
+        "scf=(xqc)",
+        "iop(7/33=1)",
+        "iop(2/9=2000)",
+        "geom=check",
+        "guess=mix",
+    ],
+    "XTB": [
+        "opt=(ts,calcall,maxcycle=256,noeig,nomicro,cartesian)",
+        "scf=(xqc)",
+        "iop(7/33=1)",
+        "iop(2/9=2000)",
+        "geom=check",
+        "guess=mix",
+    ],
+}
+
+DEFAULT_XTB_PATH = (
+    pathlib.Path("/")
+    / "home"
+    / "gridsan"
+    / "groups"
+    / "RMG"
+    / "Software"
+    / "RDMC-main"
+    / "rdmc"
+    / "external"
+    / "xtb_tools"
+)
 
 
 class BimolecularHydrogenAbstractionReaction:
@@ -469,6 +511,21 @@ class BimolecularHydrogenAbstractionReaction:
 
         return relax_score
 
+    def _get_conformer_xyz(self, conformer_index):
+        """
+        Get the XYZ coordinates of a conformer.
+
+        Parameters:
+            conformer_index (int): The index of the conformer.
+
+        Returns:
+            str: The XYZ coordinates of the conformer.
+        """
+        return (
+            "\n".join(self.ts_complexes[conformer_index].ToXYZ().splitlines()[2:])
+            + "\n\n"
+        )
+
     def to_dict(self) -> dict:
         """
         Convert the object to a dictionary.
@@ -476,14 +533,10 @@ class BimolecularHydrogenAbstractionReaction:
         Returns:
             dict: A dictionary representation of the object.
         """
-        conformers = []
-        for index, ts_complex in self.ts_complexes.items():
-            conformers.append(
-                (
-                    self.ts_relax_scores[index],
-                    "\n".join(ts_complex.ToXYZ().splitlines()[2:]) + "\n\n",
-                )
-            )
+        conformers = [
+            (self.ts_relax_scores[index], self._get_conformer_xyz(index))
+            for index in range(len(self.ts_complexes))
+        ]
         conformers.sort(key=lambda y: y[0])
         return {
             "rxn_smi": self.rxn_smi,
@@ -514,4 +567,89 @@ class BimolecularHydrogenAbstractionReaction:
         """
         return rdmc_view.ts_viewer(
             self.r_complex, self.p_complex, self.ts_complexes[index], only_ts=True
+        )
+
+    def generate_gaussian_input(
+        self,
+        id: str,
+        conformer_index: int = 0,
+        xtb_path: pathlib.Path = DEFAULT_XTB_PATH,
+    ):
+        """
+        Generate a Gaussian input file for a transition state conformer.
+
+        Parameters
+        ----------
+        conformer_index : int, optional
+            Index of the conformer, by default 0.
+
+        Returns
+        -------
+        str
+            The Gaussian input file content.
+        """
+        template = textwrap.dedent(
+            """\
+            %chk=rxn_{check}.chk
+            %mem={ramgb}gb
+            %NProcShared={cpu}
+
+            #P {am1_config} am1
+
+            am1_opt
+
+            {charge} {multi}
+            {xyz}b {h_atom} {pivot_0} b
+            b {h_atom} {pivot_1} b
+            b {h_atom} {pivot_0} F
+            b {h_atom} {pivot_1} F
+            A {pivot_0} {h_atom} {pivot_1} F
+
+
+            --Link1--
+            %chk=rxn_{check}.chk
+            %mem={ramgb}gb
+            %NProcShared={cpu}
+
+            #P {pm7_config} pm7
+
+            pm7_opt_ts_freeze
+
+            {charge} {multi}
+
+            b {h_atom} {pivot_0} b
+            b {h_atom} {pivot_1} b
+            b {h_atom} {pivot_0} F
+            b {h_atom} {pivot_1} F
+            A {pivot_0} {h_atom} {pivot_1} F
+
+
+            --Link1--
+            %chk=rxn_{check}.chk
+            %mem={ramgb}gb
+            %NProcShared={cpu}
+
+            #P {xtb_config}
+            external="{xtb_path}/xtb_gaussian.pl --gfn 2 -P"
+
+            xtb_opt_ts_free
+
+            {charge} {multi}
+            """
+        )
+
+        return template.format(
+            check=id,
+            ramgb=46,
+            cpu=46,
+            charge=0,
+            multi=2,
+            xyz=self._get_conformer_xyz(conformer_index),
+            h_atom=self.ts_h_index + 1,
+            pivot_0=self.ts_pivot_indices[0] + 1,
+            pivot_1=self.ts_pivot_indices[1] + 1,
+            am1_config=" ".join(CONFIGS["AM1"]),
+            pm7_config=" ".join(CONFIGS["PM7"]),
+            xtb_config=" ".join(CONFIGS["XTB"]),
+            xtb_path=xtb_path,
         )
